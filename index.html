@@ -118,42 +118,44 @@
     </div>
 
     <div id="vj-console">
-        <button id="console-toggle">▼ Hide</button>
+        <button id="console-toggle">▼ 隱藏面板</button>
         <div class="control-group" style="margin-top: 15px;">
-            <label for="uProgress">Vector Field Progress (Pinch to control)</label>
+            <label for="uProgress">流體散開程度 (可透過視訊捏合控制)</label>
             <input type="range" id="uProgress" min="0" max="1" step="0.01" value="0">
         </div>
         <div class="control-group">
-            <label for="cameraMode">Camera Mode</label>
+            <label for="cameraMode">運鏡模式</label>
             <select id="cameraMode" style="width: 100%; padding: 5px; background: #222; color: white; border: 1px solid #444;">
-                <option value="auto">Auto Cinematic</option>
-                <option value="manual">Manual (Orbit)</option>
+                <option value="auto">自動電影運鏡</option>
+                <option value="manual">手動控制 (滑鼠拖曳)</option>
             </select>
         </div>
         <div class="control-group">
-            <label for="uploadPhoto">Upload Custom Photo (JPG/PNG)</label>
+            <label for="uploadPhoto">上傳照片 (JPG/PNG)</label>
             <input type="file" id="uploadPhoto" accept="image/*" style="width: 100%; color: white;">
         </div>
         <div class="control-group">
-            <label for="particleDensity">Particle Density (1=High, 5=Low)</label>
+            <label for="particleDensity">粒子密度 (1=最高畫質, 5=最順暢)</label>
             <input type="range" id="particleDensity" min="1" max="5" step="1" value="1">
         </div>
         <div class="control-group">
-            <label for="audioSensitivity">Audio React Sensitivity</label>
+            <label for="audioSensitivity">音樂律動敏感度</label>
             <input type="range" id="audioSensitivity" min="0.5" max="5.0" step="0.1" value="1.6">
         </div>
         <div class="control-group">
-            <label for="vectorFieldMode">Vector Field Type</label>
+            <label for="vectorFieldMode">粒子力學模式</label>
             <select id="vectorFieldMode" style="width: 100%; padding: 5px; background: #222; color: white; border: 1px solid #444;">
-                <option value="0">Curl Noise Disturbance</option>
-                <option value="1">Reverse Growth</option>
-                <option value="2">Polar Fluid</option>
-                <option value="3">Topology Fragmentation</option>
+                <option value="0">平靜捲曲 (Curl Noise)</option>
+                <option value="1">中心爆發 (Reverse Growth)</option>
+                <option value="2">狂暴龍捲風 (Polar Fluid)</option>
+                <option value="3">空間碎裂 (Topology Shatter)</option>
+                <option value="4">螺旋星系 (Spiral Galaxy)</option>
+                <option value="5">數位陣雨 (Digital Rain)</option>
             </select>
         </div>
-        <button id="enable-webcam" style="width: 100%; padding: 10px; background: #fff; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">Enable Hand Tracking</button>
-        <button id="enable-mic" style="width: 100%; padding: 10px; background: #e91e63; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">Enable Microphone (Audio React)</button>
-        <button id="enable-fullscreen" style="width: 100%; padding: 10px; background: #333; color: #fff; border: 1px solid #666; font-weight: bold; cursor: pointer; border-radius: 4px;">Toggle Fullscreen</button>
+        <button id="enable-webcam" style="width: 100%; padding: 10px; background: #fff; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">啟用手勢追蹤 (Webcam)</button>
+        <button id="enable-mic" style="width: 100%; padding: 10px; background: #e91e63; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">啟用麥克風 (音樂律動)</button>
+        <button id="enable-fullscreen" style="width: 100%; padding: 10px; background: #4CAF50; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px;">進入全螢幕模式</button>
     </div>
 
     <script type="module" src="./main.js"></script>

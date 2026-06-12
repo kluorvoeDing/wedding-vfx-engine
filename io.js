@@ -91,9 +91,9 @@ export async function initIO() {
     consoleToggleBtn.addEventListener('click', () => {
         vjConsole.classList.toggle('collapsed');
         if (vjConsole.classList.contains('collapsed')) {
-            consoleToggleBtn.innerText = '▲ Show';
+            consoleToggleBtn.innerText = '▲ 顯示面板';
         } else {
-            consoleToggleBtn.innerText = '▼ Hide';
+            consoleToggleBtn.innerText = '▼ 隱藏面板';
         }
     });
 
@@ -101,13 +101,13 @@ export async function initIO() {
         if (!AudioState.isEnabled) {
             await initAudio();
             if (AudioState.isEnabled) {
-                enableMicButton.innerText = "Disable Microphone";
+                enableMicButton.innerText = "關閉麥克風";
                 enableMicButton.style.background = "#4CAF50";
             }
         } else {
             // Simplistic toggle logic
             AudioState.isEnabled = false;
-            enableMicButton.innerText = "Enable Microphone (Audio React)";
+            enableMicButton.innerText = "啟用麥克風 (音樂律動)";
             enableMicButton.style.background = "#e91e63";
         }
     });
@@ -140,7 +140,7 @@ async function toggleWebcam() {
 
     if (webcamRunning === true) {
         webcamRunning = false;
-        enableWebcamButton.innerText = "Enable Hand Tracking";
+        enableWebcamButton.innerText = "啟用手勢追蹤 (Webcam)";
         webcamContainer.style.display = "none";
         AppState.isHandTrackingActive = false;
         
@@ -153,7 +153,7 @@ async function toggleWebcam() {
         }
     } else {
         webcamRunning = true;
-        enableWebcamButton.innerText = "Disable Hand Tracking";
+        enableWebcamButton.innerText = "關閉手勢追蹤";
         webcamContainer.style.display = "block";
         AppState.isHandTrackingActive = true;
 

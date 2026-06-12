@@ -149,6 +149,26 @@ void main() {
             vec3 outward = normalize(basePos + vec3(0.001)) * length(noiseForce) * 1.5;
             targetVel = (outward + noiseForce) * uProgress;
             targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0;
+        } else if (uMode == 4) {
+            // Spiral Galaxy (Orbit center)
+            float dist = length(pos.xz);
+            vec3 tangent = vec3(-pos.z, 0.0, pos.x) / (dist + 0.1);
+            // Faster orbit near center
+            float speed = 20.0 / (dist * 0.5 + 1.0);
+            targetVel = tangent * speed * uProgress * 5.0;
+            // Pull towards center disk
+            targetVel.y -= pos.y * 5.0 * uProgress;
+            targetVel -= normalize(vec3(pos.x, 0.0, pos.z)) * 2.0 * uProgress;
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0;
+        } else if (uMode == 5) {
+            // Digital Rain / Meteor Shower
+            vec3 rainVel = vec3(0.0, -50.0, 0.0);
+            vec3 noiseForce = curlNoise(pos * 0.1 - uTime * 0.5) * 10.0;
+            targetVel = (rainVel + noiseForce) * uProgress;
+            // When progress is 1.0, they fall forever. When it's < 1.0, they jump back
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 8.0;
+            // To make it look like a continuous rain loop when uProgress == 1.0, we could teleport them,
+            // but since physics runs continuously, they will just stream down.
         }
     }
 
@@ -170,13 +190,28 @@ void main() {
 
 const positionShader = `
 uniform float uTime;
+uniform int uMode;
+uniform float uProgress;
+uniform sampler2D textureBasePosition;
+
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
     vec3 vel = texture2D(textureVelocity, uv).xyz;
+    vec3 basePos = texture2D(textureBasePosition, uv).xyz;
     
     // Update position
     pos += vel * 0.016; // Assuming 60fps dt
+    
+    // Mode 5 (Digital Rain): respawn at top when they fall too low
+    if (uMode == 5 && uProgress > 0.5) {
+        if (pos.y < -50.0) {
+            pos.y = 50.0 + (pos.y + 50.0); // Wrap around smoothly
+            // Reset x and z to base to avoid drifting forever
+            pos.x = basePos.x;
+            pos.z = basePos.z;
+        }
+    }
     
     gl_FragColor = vec4(pos, 1.0);
 }
@@ -310,6 +345,9 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
 
             positionUniforms = posVariable.material.uniforms;
             positionUniforms.uTime = { value: 0.0 };
+            positionUniforms.uMode = { value: 0 };
+            positionUniforms.uProgress = { value: 0.0 };
+            positionUniforms.textureBasePosition = { value: dtBasePos };
 
             const error = gpuCompute.init();
             if (error !== null) {
@@ -385,7 +423,10 @@ export function updateGPGPU(time, appState, audioPulse = 0.0) {
     velocityUniforms.uProgress.value = appState.uProgress;
     velocityUniforms.uAudioPulse.value = audioPulse;
     velocityUniforms.uMode.value = appState.vectorFieldMode;
+
     positionUniforms.uTime.value = time;
+    positionUniforms.uProgress.value = appState.uProgress;
+    positionUniforms.uMode.value = appState.vectorFieldMode;
 
     gpuCompute.compute();
     particleMaterial.uniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget(posVariable).texture;
