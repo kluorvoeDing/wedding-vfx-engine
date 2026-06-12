@@ -24,14 +24,28 @@
             position: absolute;
             bottom: 20px;
             left: 20px;
-            z-index: 10;
-            background: rgba(10, 10, 10, 0.8);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.85);
             padding: 20px;
-            border-radius: 12px;
-            width: 300px;
-            pointer-events: auto;
+            border-radius: 8px;
+            color: #fff;
+            font-family: monospace;
+            width: 320px;
+            z-index: 100;
+            border: 1px solid #333;
+            transition: transform 0.3s ease;
+        }
+        #vj-console.collapsed {
+            transform: translateY(calc(100% - 30px));
+        }
+        #console-toggle {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
         }
         .control-group {
             margin-bottom: 15px;
@@ -104,7 +118,8 @@
     </div>
 
     <div id="vj-console">
-        <div class="control-group">
+        <button id="console-toggle">▼ Hide</button>
+        <div class="control-group" style="margin-top: 15px;">
             <label for="uProgress">Vector Field Progress (Pinch to control)</label>
             <input type="range" id="uProgress" min="0" max="1" step="0.01" value="0">
         </div>

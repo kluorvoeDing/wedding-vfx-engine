@@ -16,6 +16,8 @@ const uploadPhotoInput = document.getElementById('uploadPhoto');
 const particleDensityInput = document.getElementById('particleDensity');
 const audioSensitivityInput = document.getElementById('audioSensitivity');
 const fullscreenButton = document.getElementById('enable-fullscreen');
+const consoleToggleBtn = document.getElementById('console-toggle');
+const vjConsole = document.getElementById('vj-console');
 
 let currentImageUrl = 'public/photo.png';
 let currentStepSize = 1;
@@ -82,6 +84,16 @@ export async function initIO() {
             });
         } else {
             document.exitFullscreen();
+        }
+    });
+
+    // Handle console toggle
+    consoleToggleBtn.addEventListener('click', () => {
+        vjConsole.classList.toggle('collapsed');
+        if (vjConsole.classList.contains('collapsed')) {
+            consoleToggleBtn.innerText = '▲ Show';
+        } else {
+            consoleToggleBtn.innerText = '▼ Hide';
         }
     });
 

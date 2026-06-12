@@ -109,33 +109,47 @@ void main() {
     vec3 basePos = texture2D(textureBasePosition, uv).xyz; // original vertex
 
     vec3 targetVel = vec3(0.0);
+    bool isStar = abs(basePos.z) > 5.0; // Padded particles have large Z bounds
 
-    // Vector Field Modes
-    if (uMode == 0) {
-        // Curl Noise Disturbance
-        vec3 curl = curlNoise(pos * 0.1 + uTime * 0.2);
-        targetVel = curl * 10.0 * uProgress;
-        // Gravity back to base when progress is low
-        targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0;
-    } else if (uMode == 1) {
-        // Reverse Growth (Explode then re-assemble)
-        vec3 dir = normalize(basePos);
-        targetVel = dir * 20.0 * uProgress;
-        targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0;
-    } else if (uMode == 2) {
-        // Polar Fluid (Violent Tornado/Vortex)
-        vec3 axis = vec3(0.0, 1.0, 0.0);
-        vec3 tangent = cross(axis, normalize(pos + vec3(0.0, 0.001, 0.0)));
-        vec3 upwardForce = vec3(0.0, sin(uTime * 2.0 + length(pos.xz) * 0.5) * 15.0, 0.0);
-        vec3 polarFlow = tangent * 40.0 + upwardForce;
-        targetVel = polarFlow * uProgress + curlNoise(pos * 0.08 - uTime) * 20.0 * uProgress;
-        targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0;
-    } else if (uMode == 3) {
-        // Topology Fragmentation (Violent Shatter)
-        vec3 noiseForce = snoiseVec3(pos * 0.15 + uTime) * 40.0;
-        vec3 outward = normalize(basePos + vec3(0.001)) * length(noiseForce) * 1.5;
-        targetVel = (outward + noiseForce) * uProgress;
-        targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0;
+    if (isStar) {
+        // Drifting stars: slowly move around using curl noise
+        targetVel = curlNoise(pos * 0.02 + uTime * 0.05) * 5.0;
+        
+        // Add audio reactivity to stars
+        if (uAudioPulse > 0.0) {
+            targetVel += normalize(pos) * uAudioPulse * 10.0;
+        }
+        
+        // Slight gravity to center if they wander too far
+        targetVel -= pos * 0.01;
+    } else {
+        // Vector Field Modes for Photo Particles
+        if (uMode == 0) {
+            // Curl Noise Disturbance
+            vec3 curl = curlNoise(pos * 0.1 + uTime * 0.2);
+            targetVel = curl * 10.0 * uProgress;
+            // Gravity back to base when progress is low
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0;
+        } else if (uMode == 1) {
+            // Reverse Growth (Explode then re-assemble)
+            vec3 dir = normalize(basePos);
+            targetVel = dir * 20.0 * uProgress;
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0;
+        } else if (uMode == 2) {
+            // Polar Fluid (Violent Tornado/Vortex)
+            vec3 axis = vec3(0.0, 1.0, 0.0);
+            vec3 tangent = cross(axis, normalize(pos + vec3(0.0, 0.001, 0.0)));
+            vec3 upwardForce = vec3(0.0, sin(uTime * 2.0 + length(pos.xz) * 0.5) * 15.0, 0.0);
+            vec3 polarFlow = tangent * 40.0 + upwardForce;
+            targetVel = polarFlow * uProgress + curlNoise(pos * 0.08 - uTime) * 20.0 * uProgress;
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0;
+        } else if (uMode == 3) {
+            // Topology Fragmentation (Violent Shatter)
+            vec3 noiseForce = snoiseVec3(pos * 0.15 + uTime) * 40.0;
+            vec3 outward = normalize(basePos + vec3(0.001)) * length(noiseForce) * 1.5;
+            targetVel = (outward + noiseForce) * uProgress;
+            targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0;
+        }
     }
 
     // --- Audio Reactivity ---
