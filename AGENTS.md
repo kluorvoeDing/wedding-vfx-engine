@@ -2,6 +2,14 @@
 
 本檔案記錄了系統核心架構的迭代與 AI 輔助開發之重要決策。
 
+## Codex / GitHub 操作規則
+
+- 本 repo 的遠端為 `https://github.com/kluorvoeDing/wedding-vfx-engine.git`。
+- 在 Codex sandbox 內直接執行 `gh auth status` 會讀到 stale/invalid default token，容易誤判為 GitHub 未登入。
+- 需要操作 GitHub CLI / GitHub API / `git push` 時，應直接使用授權外部環境（`sandbox_permissions: require_escalated`）。授權外部環境可透過 macOS keyring 取得有效的 `kluorvoeDing` GitHub token。
+- 不要用 sandbox 內的 `gh auth status` 作為是否能操作 GitHub 的判斷依據；若要檢查 GitHub 狀態，使用授權外部環境執行。
+- 不要輸出或擷取 raw GitHub token；只使用 `gh auth status`、`gh api`、`git push` 等必要命令。
+
 ## 核心進化歷程
 
 ### 第一階段：GPGPU 框架建立與音訊響應
