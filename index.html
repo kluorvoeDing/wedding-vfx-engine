@@ -30,6 +30,9 @@
             color: #fff;
             font-family: monospace;
             width: 320px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            box-sizing: border-box;
             z-index: 100;
             border: 1px solid #333;
             transition: transform 0.3s ease;
@@ -90,7 +93,40 @@
             pointer-events: none;
             opacity: 0.7;
         }
+        #file-protocol-warning {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.92);
+            color: #fff;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        #file-protocol-warning .message {
+            max-width: 560px;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            border-radius: 8px;
+            padding: 24px;
+            background: rgba(20, 20, 20, 0.95);
+            line-height: 1.7;
+        }
+        #file-protocol-warning a {
+            color: #9fd0ff;
+            font-weight: 700;
+        }
+        html.file-protocol #file-protocol-warning {
+            display: flex;
+        }
     </style>
+    <script>
+        if (window.location.protocol === 'file:') {
+            document.documentElement.classList.add('file-protocol');
+        }
+    </script>
     <!-- Import Maps -->
     <script type="importmap">
         {
@@ -105,6 +141,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
+    <div id="file-protocol-warning">
+        <div class="message">
+            <h1>請使用本機 HTTP 預覽</h1>
+            <p>這個專案使用 ES modules、GLTF 與跨來源資源，直接開啟 <code>index.html</code> 會被瀏覽器 CORS 擋住。</p>
+            <p>請先啟動本機伺服器，然後開啟 <a href="http://127.0.0.1:5500/?v=20260616c">http://127.0.0.1:5500/?v=20260616c</a></p>
+        </div>
+    </div>
     <div id="canvas-container"></div>
     
     <div class="hud-text">
@@ -135,8 +178,16 @@
             <input type="file" id="uploadPhoto" accept="image/*" style="width: 100%; color: white;">
         </div>
         <div class="control-group">
+            <label for="uploadLogo">上傳 LOGO / 形變目標 (PNG)</label>
+            <input type="file" id="uploadLogo" accept="image/*" style="width: 100%; color: white;">
+        </div>
+        <div class="control-group">
             <label for="particleDensity">粒子密度 (1=最高畫質, 5=最順暢)</label>
             <input type="range" id="particleDensity" min="1" max="5" step="1" value="1">
+        </div>
+        <div class="control-group">
+            <label for="logoScale">整體顯示大小</label>
+            <input type="range" id="logoScale" min="0.1" max="2.0" step="0.1" value="0.6">
         </div>
         <div class="control-group">
             <label for="audioSensitivity">音樂律動敏感度</label>
@@ -151,13 +202,37 @@
                 <option value="3">空間碎裂 (Topology Shatter)</option>
                 <option value="4">螺旋星系 (Spiral Galaxy)</option>
                 <option value="5">數位陣雨 (Digital Rain)</option>
+                <option value="6">LOGO 形變 (Logo Morph)</option>
+                <option value="7">飛灰消散 (Ash Disintegration)</option>
+                <option value="8">螢火蟲群聚 (Firefly Swarm)</option>
+                <option value="9">誓言心跳 (Vow Pulse)</option>
+                <option value="10">星圖誓約 (Constellation Vows)</option>
+                <option value="11">頭紗絲綢 (Veil Ribbons)</option>
+                <option value="12">萬花筒祝福 (Mandala Bloom)</option>
+                <option value="13">金粉禮炮 (Golden Finale)</option>
             </select>
+        </div>
+        <div class="control-group">
+            <label for="modeIntensity">模式強度</label>
+            <input type="range" id="modeIntensity" min="0" max="2.5" step="0.05" value="0.8">
+        </div>
+        <div class="control-group">
+            <label for="modeTurbulence">亂流細節</label>
+            <input type="range" id="modeTurbulence" min="0" max="2.0" step="0.05" value="0.65">
+        </div>
+        <div class="control-group">
+            <label for="returnForce">回聚力道</label>
+            <input type="range" id="returnForce" min="0" max="2.0" step="0.05" value="0.9">
+        </div>
+        <div class="control-group">
+            <label for="pointSize">粒子亮點大小</label>
+            <input type="range" id="pointSize" min="0.2" max="2.5" step="0.05" value="0.8">
         </div>
         <button id="enable-webcam" style="width: 100%; padding: 10px; background: #fff; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">啟用手勢追蹤 (Webcam)</button>
         <button id="enable-mic" style="width: 100%; padding: 10px; background: #e91e63; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; margin-bottom: 10px;">啟用麥克風 (音樂律動)</button>
         <button id="enable-fullscreen" style="width: 100%; padding: 10px; background: #4CAF50; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px;">進入全螢幕模式</button>
     </div>
 
-    <script type="module" src="./main.js"></script>
+    <script type="module" src="./main.js?v=20260616c"></script>
 </body>
 </html>

@@ -1,10 +1,12 @@
 // io.js - I/O & VJ Performance (狀態機與現場交互)
-import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
-import { initAudio, AudioState } from './audio.js';
-import { triggerRebuild } from './main.js';
+import { initAudio, stopAudio, AudioState } from './audio.js?v=20260616c';
+import { MODE_CONFIGS, getModeConfig } from './modes.js?v=20260616c';
+import { getParticleSettings } from './particleSettings.js?v=20260616c';
 
 let handLandmarker = undefined;
 let webcamRunning = false;
+let micStream = null;
+let webcamStream = null;
 const video = document.getElementById('webcam-video');
 const webcamContainer = document.getElementById('webcam-container');
 const enableWebcamButton = document.getElementById('enable-webcam');
@@ -13,22 +15,36 @@ const cameraModeSelect = document.getElementById('cameraMode');
 const vectorFieldModeSelect = document.getElementById('vectorFieldMode');
 const enableMicButton = document.getElementById('enable-mic');
 const uploadPhotoInput = document.getElementById('uploadPhoto');
+const uploadLogoInput = document.getElementById('uploadLogo');
 const particleDensityInput = document.getElementById('particleDensity');
 const audioSensitivityInput = document.getElementById('audioSensitivity');
+const logoScaleInput = document.getElementById('logoScale');
+const modeIntensityInput = document.getElementById('modeIntensity');
+const modeTurbulenceInput = document.getElementById('modeTurbulence');
+const returnForceInput = document.getElementById('returnForce');
+const pointSizeInput = document.getElementById('pointSize');
 const fullscreenButton = document.getElementById('enable-fullscreen');
 const consoleToggleBtn = document.getElementById('console-toggle');
 const vjConsole = document.getElementById('vj-console');
 
-let currentImageUrl = 'public/photo.png';
-let currentStepSize = 1;
+let currentImageUrl = 'public/papa_meilland_rose/scene.gltf';
+let currentLogoUrl = 'public/logo.png';
+let currentParticleSettings = getParticleSettings(1);
+const defaultMode = getModeConfig(0);
+let rebuildScene = () => {};
 
 // State machine
 export const AppState = {
     uProgress: 0,
     targetProgress: 0,
     cameraMode: 'auto',
-    vectorFieldMode: 0, // 0: Curl, 1: Reverse, 2: Polar, 3: Fracture
-    isHandTrackingActive: false
+    vectorFieldMode: defaultMode.shaderMode,
+    isHandTrackingActive: false,
+    logoScale: 0.6,
+    fieldIntensity: defaultMode.params.intensity,
+    turbulence: defaultMode.params.turbulence,
+    returnForce: defaultMode.params.returnForce,
+    pointSize: defaultMode.params.pointSize
 };
 
 // Easing function for smooth input (Bezier-like interpolation)
@@ -36,7 +52,49 @@ function lerp(start, end, amt) {
     return (1 - amt) * start + amt * end;
 }
 
-export async function initIO() {
+function getRebuildOptions() {
+    return {
+        ...currentParticleSettings,
+        targetImageUrl: currentLogoUrl
+    };
+}
+
+function triggerCurrentRebuild() {
+    rebuildScene(currentImageUrl, getRebuildOptions());
+}
+
+function syncModeControls(modeConfig) {
+    modeIntensityInput.value = modeConfig.params.intensity;
+    modeTurbulenceInput.value = modeConfig.params.turbulence;
+    returnForceInput.value = modeConfig.params.returnForce;
+    pointSizeInput.value = modeConfig.params.pointSize;
+}
+
+function applyModeConfig(modeId, updateProgress = true) {
+    const modeConfig = getModeConfig(modeId);
+    AppState.vectorFieldMode = modeConfig.shaderMode;
+    AppState.fieldIntensity = modeConfig.params.intensity;
+    AppState.turbulence = modeConfig.params.turbulence;
+    AppState.returnForce = modeConfig.params.returnForce;
+    AppState.pointSize = modeConfig.params.pointSize;
+    syncModeControls(modeConfig);
+
+    if (updateProgress && !AppState.isHandTrackingActive) {
+        AppState.targetProgress = modeConfig.targetProgress;
+        progressSlider.value = modeConfig.targetProgress;
+    }
+}
+
+export async function initIO({ triggerRebuild } = {}) {
+    if (typeof triggerRebuild === 'function') {
+        rebuildScene = triggerRebuild;
+    }
+
+    vectorFieldModeSelect.innerHTML = MODE_CONFIGS.map((mode) => (
+        `<option value="${mode.id}">${mode.label}</option>`
+    )).join('');
+    applyModeConfig(defaultMode.id, false);
+
     // 1. Setup VJ Console listeners
     progressSlider.addEventListener('input', (e) => {
         if (!AppState.isHandTrackingActive) {
@@ -48,9 +106,11 @@ export async function initIO() {
         AppState.cameraMode = e.target.value;
     });
 
-    vectorFieldModeSelect.addEventListener('change', (e) => {
-        AppState.vectorFieldMode = parseInt(e.target.value);
-    });
+    const handleModeChange = (e) => {
+        applyModeConfig(e.target.value);
+    };
+    vectorFieldModeSelect.addEventListener('input', handleModeChange);
+    vectorFieldModeSelect.addEventListener('change', handleModeChange);
 
     // Handle photo upload
     uploadPhotoInput.addEventListener('change', (e) => {
@@ -59,21 +119,55 @@ export async function initIO() {
             const reader = new FileReader();
             reader.onload = (event) => {
                 currentImageUrl = event.target.result;
-                triggerRebuild(currentImageUrl, currentStepSize);
+                triggerCurrentRebuild();
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    uploadLogoInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                currentLogoUrl = event.target.result;
+                triggerCurrentRebuild();
             };
             reader.readAsDataURL(file);
         }
     });
 
     // Handle density change
-    particleDensityInput.addEventListener('change', (e) => {
-        currentStepSize = parseInt(e.target.value);
-        triggerRebuild(currentImageUrl, currentStepSize);
-    });
+    const handleDensityCommit = (e) => {
+        currentParticleSettings = getParticleSettings(e.target.value);
+        triggerCurrentRebuild();
+    };
+    particleDensityInput.addEventListener('change', handleDensityCommit);
 
     // Handle audio sensitivity
     audioSensitivityInput.addEventListener('input', (e) => {
         AudioState.sensitivity = parseFloat(e.target.value);
+    });
+
+    // Handle logo scale
+    logoScaleInput.addEventListener('input', (e) => {
+        AppState.logoScale = parseFloat(e.target.value);
+    });
+
+    modeIntensityInput.addEventListener('input', (e) => {
+        AppState.fieldIntensity = parseFloat(e.target.value);
+    });
+
+    modeTurbulenceInput.addEventListener('input', (e) => {
+        AppState.turbulence = parseFloat(e.target.value);
+    });
+
+    returnForceInput.addEventListener('input', (e) => {
+        AppState.returnForce = parseFloat(e.target.value);
+    });
+
+    pointSizeInput.addEventListener('input', (e) => {
+        AppState.pointSize = parseFloat(e.target.value);
     });
 
     // Handle fullscreen
@@ -99,21 +193,27 @@ export async function initIO() {
 
     enableMicButton.addEventListener('click', async () => {
         if (!AudioState.isEnabled) {
-            await initAudio();
+            micStream = await initAudio();
             if (AudioState.isEnabled) {
                 enableMicButton.innerText = "關閉麥克風";
                 enableMicButton.style.background = "#4CAF50";
             }
         } else {
-            // Simplistic toggle logic
-            AudioState.isEnabled = false;
+            stopAudio();
+            micStream = null;
             enableMicButton.innerText = "啟用麥克風 (音樂律動)";
             enableMicButton.style.background = "#e91e63";
         }
     });
 
-    // 2. Setup MediaPipe
+    enableWebcamButton.disabled = true;
+    enableWebcamButton.innerText = "手勢追蹤載入中";
+    initHandTracking();
+}
+
+async function initHandTracking() {
     try {
+        const { FilesetResolver, HandLandmarker } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3');
         const vision = await FilesetResolver.forVisionTasks(
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
         );
@@ -128,6 +228,8 @@ export async function initIO() {
         });
         
         enableWebcamButton.addEventListener("click", toggleWebcam);
+        enableWebcamButton.disabled = false;
+        enableWebcamButton.innerText = "啟用手勢追蹤 (Webcam)";
     } catch (e) {
         console.error("MediaPipe initialization failed:", e);
         enableWebcamButton.innerText = "Hand Tracking Unavailable";
@@ -151,6 +253,8 @@ async function toggleWebcam() {
             tracks.forEach(track => track.stop());
             video.srcObject = null;
         }
+        webcamStream = null;
+        video.onloadeddata = null;
     } else {
         webcamRunning = true;
         enableWebcamButton.innerText = "關閉手勢追蹤";
@@ -159,8 +263,16 @@ async function toggleWebcam() {
 
         const constraints = { video: { facingMode: "user" } };
         navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+            webcamStream = stream;
             video.srcObject = stream;
-            video.addEventListener("loadeddata", predictWebcam);
+            video.onloadeddata = predictWebcam;
+        }).catch((err) => {
+            console.error("Webcam access denied or error:", err);
+            webcamRunning = false;
+            webcamStream = null;
+            AppState.isHandTrackingActive = false;
+            webcamContainer.style.display = "none";
+            enableWebcamButton.innerText = "啟用手勢追蹤 (Webcam)";
         });
     }
 }

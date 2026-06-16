@@ -9,11 +9,14 @@ let audioContext;
 let analyser;
 let dataArray;
 let source;
+let currentStream;
 
 export async function initAudio() {
     try {
+        stopAudio();
         // Request microphone access
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        currentStream = stream;
         
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
@@ -30,10 +33,34 @@ export async function initAudio() {
         
         AudioState.isEnabled = true;
         console.log("Audio pipeline initialized successfully.");
+        return stream;
     } catch (err) {
         console.error("Microphone access denied or error: ", err);
         AudioState.isEnabled = false;
+        return null;
     }
+}
+
+export function stopAudio() {
+    if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+    }
+
+    if (source) {
+        source.disconnect();
+        source = undefined;
+    }
+
+    if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close();
+    }
+
+    audioContext = undefined;
+    analyser = undefined;
+    dataArray = undefined;
+    AudioState.isEnabled = false;
+    AudioState.audioPulse = 0.0;
 }
 
 export function updateAudio() {

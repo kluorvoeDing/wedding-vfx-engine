@@ -5,16 +5,17 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js';
-import { initIO, updateIO, AppState } from './io.js';
-import { updateAudio, AudioState } from './audio.js';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260616c';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260616c';
+import { initIO, updateIO, AppState } from './io.js?v=20260616c';
+import { updateAudio, AudioState } from './audio.js?v=20260616c';
 
 let scene, renderer, composer, camera;
 let boundingBox;
 let lastTime = 0;
 let frames = 0;
 let fpsTimer = 0;
+let rebuildVersion = 0;
 
 const fpsCounter = document.getElementById('fps-counter');
 const particleCounter = document.getElementById('particle-count');
@@ -53,11 +54,11 @@ async function init() {
     composer.addPass(bloomPass);
 
     // 3. I/O & MediaPipe Setup
-    await initIO();
+    await initIO({ triggerRebuild });
 
     // 4. GPGPU Data Pipeline Setup
     // Initialize GPGPU which parses GLTF and sets up textures
-    const gpuData = await initGPGPU(renderer, scene);
+    const gpuData = await initGPGPU(renderer, scene, 'public/papa_meilland_rose/scene.gltf');
     particleCounter.innerText = `PARTICLES: ${gpuData.pointsCount.toLocaleString()}`;
     boundingBox = gpuData.boundingBox;
 
@@ -105,8 +106,10 @@ function animate(time) {
     composer.render(deltaTime);
 }
 
-export async function triggerRebuild(imageUrl, stepSize) {
-    const gpuData = await initGPGPU(renderer, scene, imageUrl, stepSize);
+export async function triggerRebuild(imageUrl, options) {
+    const version = ++rebuildVersion;
+    const gpuData = await initGPGPU(renderer, scene, imageUrl, options);
+    if (version !== rebuildVersion) return;
     particleCounter.innerText = `PARTICLES: ${gpuData.pointsCount.toLocaleString()}`;
     boundingBox = gpuData.boundingBox;
 }

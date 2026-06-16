@@ -5,6 +5,12 @@ let camera;
 let focusTarget = new THREE.Vector3(0, 0, 0);
 let timeline;
 let currentCamPos = new THREE.Vector3(0, 0, 50);
+let manualYaw = 0;
+let manualPitch = 0.25;
+let manualDistanceScale = 1.0;
+let isDragging = false;
+let lastPointerX = 0;
+let lastPointerY = 0;
 
 // Parameters for Frustum Fitting
 const MIN_DISTANCE = 10;
@@ -21,6 +27,32 @@ export function initCamera(scene) {
     timeline.to(currentCamPos, { duration: 15, x: 5, y: 3, z: 45, ease: "sine.inOut" })
             .to(currentCamPos, { duration: 15, x: -5, y: -2, z: 55, ease: "sine.inOut" })
             .to(currentCamPos, { duration: 15, x: 0, y: 0, z: 50, ease: "sine.inOut" });
+
+    window.addEventListener('pointerdown', (event) => {
+        if (event.target.closest && event.target.closest('#vj-console')) return;
+        isDragging = true;
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
+    });
+
+    window.addEventListener('pointermove', (event) => {
+        if (!isDragging) return;
+        const dx = event.clientX - lastPointerX;
+        const dy = event.clientY - lastPointerY;
+        manualYaw -= dx * 0.005;
+        manualPitch = THREE.MathUtils.clamp(manualPitch + dy * 0.004, -1.1, 1.1);
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
+    });
+
+    window.addEventListener('pointerup', () => {
+        isDragging = false;
+    });
+
+    window.addEventListener('wheel', (event) => {
+        if (event.target.closest && event.target.closest('#vj-console')) return;
+        manualDistanceScale = THREE.MathUtils.clamp(manualDistanceScale + event.deltaY * 0.001, 0.45, 2.0);
+    }, { passive: true });
             
     return camera;
 }
@@ -64,12 +96,13 @@ export function updateCamera(deltaTime, appState, boundingBox) {
         const desiredPos = dir.multiplyScalar(targetDistance).add(focusTarget);
         camera.position.lerp(desiredPos, deltaTime * 2.5); // Faster lerp for responsiveness
     } else {
-        // Manual mode: simple orbit based on mouse/touch could be added here,
-        // For now, just orbit slowly based on time if manual selected, or hold still.
-        const time = performance.now() * 0.0005;
-        const dir = new THREE.Vector3(Math.sin(time), Math.cos(time) * 0.5, Math.cos(time)).normalize();
-        const desiredPos = dir.multiplyScalar(targetDistance).add(focusTarget);
-        camera.position.lerp(desiredPos, deltaTime * 1.0);
+        const dir = new THREE.Vector3(
+            Math.sin(manualYaw) * Math.cos(manualPitch),
+            Math.sin(manualPitch),
+            Math.cos(manualYaw) * Math.cos(manualPitch)
+        ).normalize();
+        const desiredPos = dir.multiplyScalar(targetDistance * manualDistanceScale).add(focusTarget);
+        camera.position.lerp(desiredPos, deltaTime * 5.0);
     }
 
     camera.lookAt(focusTarget);
