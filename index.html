@@ -173,6 +173,21 @@
         </div>
 
         <div class="control-group">
+            <label for="particleDensity">粒子密度 (1=最高畫質, 5=最順暢)</label>
+            <input type="range" id="particleDensity" min="1" max="5" step="1" value="4">
+        </div>
+
+        <div class="control-group">
+            <label for="logoScale">整體顯示大小</label>
+            <input type="range" id="logoScale" min="0.1" max="2.5" step="0.1" value="1.2">
+        </div>
+
+        <div class="control-group">
+            <label for="pointSize">粒子亮點大小</label>
+            <input type="range" id="pointSize" min="0.2" max="2.5" step="0.05" value="1.35">
+        </div>
+
+        <div class="control-group">
             <label for="cameraMode">運鏡模式</label>
             <select id="cameraMode" style="width: 100%; padding: 8px; background: #222; color: white; border: 1px solid #444; border-radius: 4px;">
                 <option value="auto">自動電影運鏡</option>
@@ -185,6 +200,6 @@
         </div>
     </div>
 
-    <script type="module" src="./main.js?v=20260621_wedding"></script>
+    <script type="module" src="./main.js?v=20260621_wedding_v2"></script>
 </body>
 </html>

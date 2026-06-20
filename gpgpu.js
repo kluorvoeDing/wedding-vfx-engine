@@ -576,12 +576,7 @@ export function updateGPGPU(time, appState, audioPulse = 0.0) {
     velocityUniforms.uMode.value = appState.vectorFieldMode;
     
     if (particleMaterial) {
-        // Interpolate scale dynamically between 0.6 (Rose) and 2.0 (LOGO) based on progress
-        const baseScale = 0.6;
-        const targetScale = 2.0;
-        const currentScale = baseScale + (targetScale - baseScale) * appState.uProgress;
-        particleMaterial.uniforms.uGlobalScale.value = currentScale;
-        
+        particleMaterial.uniforms.uGlobalScale.value = appState.logoScale;
         particleMaterial.uniforms.pointSize.value = appState.pointSize ?? 0.8;
         particleMaterial.uniforms.uRenderMode.value = appState.vectorFieldMode ?? 0;
         particleMaterial.uniforms.uRotationAngle.value = time * 0.15; // Slow self-rotation speed
