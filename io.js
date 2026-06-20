@@ -1,7 +1,7 @@
 // io.js - I/O & VJ Performance (狀態機與現場交互)
-import { initAudio, stopAudio, AudioState } from './audio.js?v=20260616c';
-import { MODE_CONFIGS, getModeConfig } from './modes.js?v=20260616c';
-import { getParticleSettings } from './particleSettings.js?v=20260616c';
+import { initAudio, stopAudio, AudioState } from './audio.js?v=20260620_v8';
+import { MODE_CONFIGS, getModeConfig } from './modes.js?v=20260620_v8';
+import { getParticleSettings } from './particleSettings.js?v=20260620_v8';
 
 let handLandmarker = undefined;
 let webcamRunning = false;
@@ -32,6 +32,8 @@ let currentLogoUrl = 'public/logo.png';
 let currentParticleSettings = getParticleSettings(1);
 const defaultMode = getModeConfig(0);
 let rebuildScene = () => {};
+
+export const getCurrentImageUrl = () => currentImageUrl;
 
 // State machine
 export const AppState = {
@@ -111,6 +113,15 @@ export async function initIO({ triggerRebuild } = {}) {
     };
     vectorFieldModeSelect.addEventListener('input', handleModeChange);
     vectorFieldModeSelect.addEventListener('change', handleModeChange);
+
+    // Handle 3D Model Select
+    const modelSelectInput = document.getElementById('modelSelect');
+    if (modelSelectInput) {
+        modelSelectInput.addEventListener('change', (e) => {
+            currentImageUrl = e.target.value;
+            triggerCurrentRebuild();
+        });
+    }
 
     // Handle photo upload
     uploadPhotoInput.addEventListener('change', (e) => {

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getParticleSettings } from './particleSettings.js?v=20260616c';
+import { getParticleSettings } from './particleSettings.js?v=20260620_v8';
 
 let gpuCompute;
 let posVariable, velVariable;
@@ -323,6 +323,10 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
             particleGeometry.dispose();
             particleMaterial.dispose();
         }
+        gpuCompute = null;
+        particleMesh = null;
+        particleGeometry = null;
+        particleMaterial = null;
 
         const processVertices = (vertices, colors, tempBox, targetVertices = null) => {
             if (vertices.length === 0) {
@@ -474,7 +478,9 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     texturePosition: { value: null },
                     pointSize: { value: 0.8 },
                     uGlobalScale: { value: 0.6 },
-                    uRenderMode: { value: 0 }
+                    uRenderMode: { value: 0 },
+                    uRotationAngle: { value: 0.0 },
+                    uProgress: { value: 0.0 }
                 },
                 vertexColors: true,
                 vertexShader: `
@@ -482,11 +488,24 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     uniform float pointSize;
                     uniform float uGlobalScale;
                     uniform int uRenderMode;
+                    uniform float uRotationAngle;
+                    uniform float uProgress;
                     // uv and color are automatically injected by Three.js ShaderMaterial
                     varying vec3 vColor;
                     void main() {
                         vec4 pos = texture2D(texturePosition, uv);
-                        vec4 scaledPos = vec4(pos.xyz * uGlobalScale, 1.0);
+                        vec3 rotatedPos = pos.xyz;
+                        
+                        // Y-axis rotation (spindle rotation along stem), fades out as uProgress reaches 1.0
+                        float angle = uRotationAngle * (1.0 - uProgress);
+                        float cosA = cos(angle);
+                        float sinA = sin(angle);
+                        float rx = rotatedPos.x * cosA - rotatedPos.z * sinA;
+                        float rz = rotatedPos.x * sinA + rotatedPos.z * cosA;
+                        rotatedPos.x = rx;
+                        rotatedPos.z = rz;
+                        
+                        vec4 scaledPos = vec4(rotatedPos * uGlobalScale, 1.0);
                         vec4 mvPosition = modelViewMatrix * scaledPos;
                         gl_PointSize = pointSize * (20.0 / -mvPosition.z);
                         gl_Position = projectionMatrix * mvPosition;
@@ -509,7 +528,7 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                         } else if (uRenderMode == 12) {
                             tint = vec3(1.0, 0.78, 0.95);
                         } else if (uRenderMode == 13) {
-                            tint = vec3(1.0, 0.72, 0.32);
+                            tint = vec3(0.9, 0.95, 1.0); // Silver white
                         }
                         gl_FragColor = vec4(vColor * tint, alpha);
                     }
@@ -522,6 +541,7 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
             particleMesh = new THREE.Points(particleGeometry, particleMaterial);
             scene.add(particleMesh);
 
+            console.log(`[GPGPU] Rebuild complete. Particles count: ${pointsCount}.`);
             resolve({ pointsCount, boundingBox });
         };
 
@@ -563,58 +583,81 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
         };
 
         if (imageUrl.toLowerCase().endsWith('.gltf') || imageUrl.toLowerCase().endsWith('.glb')) {
+            console.log(`[GLTFLoader] Loading 3D model: ${imageUrl}`);
             const loader = new GLTFLoader();
             loader.load(imageUrl, (gltf) => {
-                let modelGeometry;
+                console.log(`[GLTFLoader] Loaded successfully: ${imageUrl}`);
+                gltf.scene.updateMatrixWorld(true);
+                
+                const box = new THREE.Box3().setFromObject(gltf.scene);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const radius = size.length() / 2;
+                const scale = 5.0 / (radius || 1.0);
+
+                const vertices = [];
+                const colors = [];
+                const tempBox = new THREE.Box3();
+                tempBox.min.set(1e5, 1e5, 1e5);
+                tempBox.max.set(-1e5, -1e5, -1e5);
+
                 gltf.scene.traverse((child) => {
-                    if (child.isMesh && !modelGeometry) {
-                        modelGeometry = child.geometry;
+                    if (child.isMesh && child.geometry) {
+                        const posAttr = child.geometry.getAttribute('position');
+                        const colorAttr = child.geometry.getAttribute('color');
+                        const mat = child.matrixWorld;
+                        
+                        if (posAttr) {
+                            for (let i = 0; i < posAttr.count; i++) {
+                                const v = new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+                                v.applyMatrix4(mat);
+                                v.sub(center);
+                                v.multiplyScalar(scale);
+
+                                let vx = v.x;
+                                let vy = v.y;
+                                let vz = v.z;
+                                
+                                // No manual rotation needed: the GLTF scene graph's
+                                // Sketchfab_model root node already contains a Z-up → Y-up
+                                // rotation matrix. applyMatrix4(mat) above has already
+                                // applied it, so the model is already upright (stem along Y).
+
+                                vertices.push(vx, vy, vz);
+                                
+                                if (colorAttr) {
+                                    colors.push(colorAttr.getX(i), colorAttr.getY(i), colorAttr.getZ(i));
+                                } else {
+                                    // Rose particles remain white but dim to preserve detail in Additive Blending
+                                    colors.push(0.3, 0.3, 0.3);
+                                }
+                                
+                                tempBox.min.x = Math.min(tempBox.min.x, vx);
+                                tempBox.min.y = Math.min(tempBox.min.y, vy);
+                                tempBox.min.z = Math.min(tempBox.min.z, vz);
+                                tempBox.max.x = Math.max(tempBox.max.x, vx);
+                                tempBox.max.y = Math.max(tempBox.max.y, vy);
+                                tempBox.max.z = Math.max(tempBox.max.z, vz);
+                            }
+                        }
                     }
                 });
-                
-                if (modelGeometry) {
-                    modelGeometry.center();
-                    modelGeometry.computeBoundingSphere();
-                    const radius = modelGeometry.boundingSphere.radius;
-                    const scale = 5.0 / radius; 
-                    modelGeometry.scale(scale, scale, scale);
-                    
-                    const posAttr = modelGeometry.getAttribute('position');
-                    const vertices = [];
-                    const colors = [];
-                    const tempBox = new THREE.Box3();
-                    tempBox.min.set(1e5, 1e5, 1e5);
-                    tempBox.max.set(-1e5, -1e5, -1e5);
 
-                    for(let i = 0; i < posAttr.count; i++) {
-                        let vx = posAttr.getX(i);
-                        let vy = posAttr.getY(i);
-                        let vz = posAttr.getZ(i);
-                        
-                        // Rotate X by -PI / 2 to make it stand up correctly
-                        let tempVy = vy;
-                        vy = vz;
-                        vz = -tempVy;
-
-                        vertices.push(vx, vy, vz);
-                        colors.push(1.0, 1.0, 1.0); // Pure White
-                        
-                        tempBox.min.x = Math.min(tempBox.min.x, vx);
-                        tempBox.min.y = Math.min(tempBox.min.y, vy);
-                        tempBox.min.z = Math.min(tempBox.min.z, vz);
-                        tempBox.max.x = Math.max(tempBox.max.x, vx);
-                        tempBox.max.y = Math.max(tempBox.max.y, vy);
-                        tempBox.max.z = Math.max(tempBox.max.z, vz);
-                    }
+                if (vertices.length > 0) {
+                    console.log(`[GLTFLoader] Extracted ${vertices.length / 3} vertices from ${imageUrl}`);
+                    const extX = (tempBox.max.x - tempBox.min.x).toFixed(3);
+                    const extY = (tempBox.max.y - tempBox.min.y).toFixed(3);
+                    const extZ = (tempBox.max.z - tempBox.min.z).toFixed(3);
+                    console.log(`[GLTFLoader] BBox extents — X: ${extX}, Y: ${extY}, Z: ${extZ} (Y should be largest for upright rose)`);
                     loadLogo().then(targetVertices => {
                         processVertices(vertices, colors, tempBox, targetVertices);
                     });
                 } else {
-                    console.error("No mesh found in GLTF");
+                    console.error(`[GLTFLoader] No mesh vertices found in GLTF: ${imageUrl}`);
                     resolve({ pointsCount: 0, boundingBox });
                 }
             }, undefined, (error) => {
-                console.error("Error loading GLTF:", error);
+                console.error(`[GLTFLoader] Error loading GLTF from ${imageUrl}:`, error);
                 resolve({ pointsCount: 0, boundingBox });
             });
         } else {
@@ -677,7 +720,7 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
 }
 
 export function updateGPGPU(time, appState, audioPulse = 0.0) {
-    if (!gpuCompute) return;
+    if (!gpuCompute || !particleMesh || !particleMaterial) return;
 
     velocityUniforms.uTime.value = time;
     velocityUniforms.uProgress.value = appState.uProgress;
@@ -691,6 +734,8 @@ export function updateGPGPU(time, appState, audioPulse = 0.0) {
         particleMaterial.uniforms.uGlobalScale.value = appState.logoScale;
         particleMaterial.uniforms.pointSize.value = appState.pointSize ?? 0.8;
         particleMaterial.uniforms.uRenderMode.value = appState.vectorFieldMode ?? 0;
+        particleMaterial.uniforms.uRotationAngle.value = time * 0.2;
+        particleMaterial.uniforms.uProgress.value = appState.uProgress;
     }
 
     positionUniforms.uTime.value = time;

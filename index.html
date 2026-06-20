@@ -145,7 +145,7 @@
         <div class="message">
             <h1>請使用本機 HTTP 預覽</h1>
             <p>這個專案使用 ES modules、GLTF 與跨來源資源，直接開啟 <code>index.html</code> 會被瀏覽器 CORS 擋住。</p>
-            <p>請先啟動本機伺服器，然後開啟 <a href="http://127.0.0.1:5500/?v=20260616c">http://127.0.0.1:5500/?v=20260616c</a></p>
+            <p>請先啟動本機伺服器，然後開啟 <a href="http://127.0.0.1:5500/?v=20260620_v8">http://127.0.0.1:5500/?v=20260620_v8</a></p>
         </div>
     </div>
     <div id="canvas-container"></div>
@@ -171,6 +171,13 @@
             <select id="cameraMode" style="width: 100%; padding: 5px; background: #222; color: white; border: 1px solid #444;">
                 <option value="auto">自動電影運鏡</option>
                 <option value="manual">手動控制 (滑鼠拖曳)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="modelSelect">內建 3D 玫瑰切換</label>
+            <select id="modelSelect" style="width: 100%; padding: 5px; background: #222; color: white; border: 1px solid #444;">
+                <option value="public/papa_meilland_rose/scene.gltf">Papa Meilland Rose (預設)</option>
+                <option value="public/3D玫瑰花素材/rose/scene.gltf">Rose 1</option>
             </select>
         </div>
         <div class="control-group">
@@ -205,11 +212,7 @@
                 <option value="6">LOGO 形變 (Logo Morph)</option>
                 <option value="7">飛灰消散 (Ash Disintegration)</option>
                 <option value="8">螢火蟲群聚 (Firefly Swarm)</option>
-                <option value="9">誓言心跳 (Vow Pulse)</option>
-                <option value="10">星圖誓約 (Constellation Vows)</option>
-                <option value="11">頭紗絲綢 (Veil Ribbons)</option>
-                <option value="12">萬花筒祝福 (Mandala Bloom)</option>
-                <option value="13">金粉禮炮 (Golden Finale)</option>
+                <option value="9">銀白禮炮 (Silver Finale)</option>
             </select>
         </div>
         <div class="control-group">
@@ -233,6 +236,6 @@
         <button id="enable-fullscreen" style="width: 100%; padding: 10px; background: #4CAF50; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px;">進入全螢幕模式</button>
     </div>
 
-    <script type="module" src="./main.js?v=20260616c"></script>
+    <script type="module" src="./main.js?v=20260620_v8"></script>
 </body>
 </html>

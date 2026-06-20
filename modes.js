@@ -64,36 +64,8 @@ export const MODE_CONFIGS = [
     },
     {
         id: 9,
-        shaderMode: 9,
-        label: '誓言心跳 (Vow Pulse)',
-        targetProgress: 0.8,
-        params: { intensity: 1.0, turbulence: 0.45, returnForce: 0.95, pointSize: 1.05 }
-    },
-    {
-        id: 10,
-        shaderMode: 10,
-        label: '星圖誓約 (Constellation Vows)',
-        targetProgress: 0.9,
-        params: { intensity: 0.95, turbulence: 0.35, returnForce: 0.85, pointSize: 1.15 }
-    },
-    {
-        id: 11,
-        shaderMode: 11,
-        label: '頭紗絲綢 (Veil Ribbons)',
-        targetProgress: 0.8,
-        params: { intensity: 0.85, turbulence: 0.55, returnForce: 0.8, pointSize: 0.9 }
-    },
-    {
-        id: 12,
-        shaderMode: 12,
-        label: '萬花筒祝福 (Mandala Bloom)',
-        targetProgress: 0.85,
-        params: { intensity: 1.0, turbulence: 0.25, returnForce: 0.9, pointSize: 0.95 }
-    },
-    {
-        id: 13,
         shaderMode: 13,
-        label: '金粉禮炮 (Golden Finale)',
+        label: '銀白禮炮 (Silver Finale)',
         targetProgress: 1.0,
         params: { intensity: 1.25, turbulence: 0.75, returnForce: 0.55, pointSize: 1.2 }
     }

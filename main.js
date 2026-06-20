@@ -5,10 +5,10 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260616c';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260616c';
-import { initIO, updateIO, AppState } from './io.js?v=20260616c';
-import { updateAudio, AudioState } from './audio.js?v=20260616c';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260620_v8';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260620_v8';
+import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260620_v8';
+import { updateAudio, AudioState } from './audio.js?v=20260620_v8';
 
 let scene, renderer, composer, camera;
 let boundingBox;
@@ -58,7 +58,7 @@ async function init() {
 
     // 4. GPGPU Data Pipeline Setup
     // Initialize GPGPU which parses GLTF and sets up textures
-    const gpuData = await initGPGPU(renderer, scene, 'public/papa_meilland_rose/scene.gltf');
+    const gpuData = await initGPGPU(renderer, scene, getCurrentImageUrl());
     particleCounter.innerText = `PARTICLES: ${gpuData.pointsCount.toLocaleString()}`;
     boundingBox = gpuData.boundingBox;
 
