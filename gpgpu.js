@@ -98,11 +98,11 @@ vec3 curlNoise( vec3 p ){
 const velocityShader = `
 uniform float uTime;
 uniform float uProgress;
-uniform float uAudioPulse; // Audio Reactivity
+uniform float uAudioPulse; // Audio Reactivity (Not active in this branch, kept for struct alignment)
 uniform float uIntensity;
 uniform float uTurbulence;
 uniform float uReturnForce;
-uniform int uMode; // Vector Field mode
+uniform int uMode; // Vector Field mode (Hardcoded to 6)
 uniform sampler2D textureBasePosition;
 uniform sampler2D textureTargetPosition; // New target for LOGO Morph
 ${glslNoise}
@@ -120,152 +120,25 @@ void main() {
         // Drifting stars: slowly move around using curl noise
         targetVel = curlNoise(pos * 0.02 + uTime * 0.05) * 5.0;
         
-        // Add audio reactivity to stars
-        if (uAudioPulse > 0.0) {
-            targetVel += normalize(pos) * uAudioPulse * 10.0;
-        }
-        
         // Slight gravity to center if they wander too far
         targetVel -= pos * 0.01;
     } else {
-        // Vector Field Modes for Photo Particles
-        if (uMode == 0) {
-            // Curl Noise Disturbance
-            vec3 curl = curlNoise(pos * 0.1 + uTime * 0.2);
-            targetVel = curl * 10.0 * uProgress * uIntensity;
-            // Gravity back to base when progress is low
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0 * uReturnForce;
-        } else if (uMode == 1) {
-            // Reverse Growth (Explode then re-assemble)
-            vec3 dir = normalize(basePos);
-            targetVel = dir * 20.0 * uProgress * uIntensity;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0 * uReturnForce;
-        } else if (uMode == 2) {
-            // Polar Fluid (Violent Tornado/Vortex)
-            vec3 axis = vec3(0.0, 1.0, 0.0);
-            vec3 tangent = cross(axis, normalize(pos + vec3(0.0, 0.001, 0.0)));
-            vec3 upwardForce = vec3(0.0, sin(uTime * 2.0 + length(pos.xz) * 0.5) * 15.0, 0.0);
-            vec3 polarFlow = tangent * 40.0 + upwardForce;
-            targetVel = polarFlow * uProgress * uIntensity + curlNoise(pos * 0.08 - uTime) * 20.0 * uProgress * uTurbulence;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0 * uReturnForce;
-        } else if (uMode == 3) {
-            // Topology Fragmentation (Violent Shatter)
-            vec3 noiseForce = snoiseVec3(pos * 0.15 + uTime) * 40.0 * uTurbulence;
-            vec3 outward = normalize(basePos + vec3(0.001)) * length(noiseForce) * 1.5 * uIntensity;
-            targetVel = (outward + noiseForce) * uProgress;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0 * uReturnForce;
-        } else if (uMode == 4) {
-            // Spiral Galaxy (Orbit center)
-            float dist = length(pos.xz);
-            vec3 tangent = vec3(-pos.z, 0.0, pos.x) / (dist + 0.1);
-            // Faster orbit near center
-            float speed = 20.0 / (dist * 0.5 + 1.0);
-            targetVel = tangent * speed * uProgress * 5.0 * uIntensity;
-            // Pull towards center disk
-            targetVel.y -= pos.y * 5.0 * uProgress * uIntensity;
-            targetVel -= normalize(vec3(pos.x, 0.0, pos.z)) * 2.0 * uProgress * uIntensity;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0 * uReturnForce;
-        } else if (uMode == 5) {
-            // Digital Rain / Meteor Shower
-            vec3 rainVel = vec3(0.0, -50.0, 0.0);
-            vec3 noiseForce = curlNoise(pos * 0.1 - uTime * 0.5) * 10.0 * uTurbulence;
-            targetVel = (rainVel * uIntensity + noiseForce) * uProgress;
-            // When progress is 1.0, they fall forever. When it's < 1.0, they jump back
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 8.0 * uReturnForce;
-        } else if (uMode == 6) {
-            // Logo Morph: Explode outwards like Mode 7, then converge to target
-            vec3 targetPos = texture2D(textureTargetPosition, uv).xyz;
-            vec3 finalPos = mix(basePos, targetPos, uProgress);
-            
-            // Middle bump peaks at uProgress = 0.5
-            float middleBump = sin(uProgress * 3.14159);
-            
-            // Mode 7 style explosion (Outward + High turbulence)
-            vec3 outward = normalize(basePos + vec3(0.001)) * 40.0 * uIntensity;
-            vec3 turbulence = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
-            
-            vec3 explosionForce = (outward + turbulence) * middleBump;
-            
-            targetVel = (finalPos - pos) * 8.0 * uReturnForce + explosionForce;
-        } else if (uMode == 7) {
-            // Ash Disintegration (Scattering in all directions + Turbulence)
-            vec3 outward = normalize(basePos + vec3(0.001)) * 30.0 * uIntensity;
-            vec3 turbulence = curlNoise(pos * 0.2 + uTime * 1.5) * 50.0 * uTurbulence;
-            targetVel = (outward + turbulence) * uProgress;
-            // Stronger pull back when uProgress is 0
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 6.0 * uReturnForce;
-        } else if (uMode == 8) {
-            // Firefly Swarm
-            vec3 swarm = curlNoise(pos * 0.05 + uTime * 0.3) * 30.0 * uTurbulence;
-            // Soft centripetal force
-            vec3 centerPull = -normalize(pos + vec3(0.001)) * length(pos) * 0.8 * uIntensity;
-            targetVel = (swarm + centerPull) * uProgress;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0 * uReturnForce;
-        } else if (uMode == 9) {
-            // Vow Pulse: concentric heart-beat rings that keep the form readable
-            vec3 planar = vec3(basePos.x, basePos.y, 0.0);
-            vec3 radial = normalize(planar + vec3(0.001, 0.001, 0.0));
-            float ring = sin(length(planar) * 3.2 - uTime * 5.0);
-            float heartbeat = smoothstep(0.55, 1.0, ring) * (0.65 + uAudioPulse * 1.8);
-            vec3 shimmer = curlNoise(pos * 0.12 + uTime * 0.7) * 14.0 * uTurbulence;
-            targetVel = radial * heartbeat * 28.0 * uProgress * uIntensity + shimmer * uProgress;
-            targetVel += (basePos - pos) * 6.0 * uReturnForce;
-        } else if (uMode == 10) {
-            // Constellation Vows: points migrate to radial star nodes with soft shimmer
-            vec3 planar = vec3(basePos.x, basePos.y, 0.0);
-            float angle = atan(planar.y, planar.x);
-            float sector = floor((angle + 3.14159) / 0.523598);
-            float snappedAngle = sector * 0.523598 - 3.14159;
-            float radius = 2.8 + mod(sector * 1.618 + floor(abs(basePos.z) * 7.0), 5.0) * 0.9;
-            vec3 node = vec3(cos(snappedAngle) * radius, sin(snappedAngle) * radius, sin(sector * 2.1) * 1.2);
-            vec3 orbit = vec3(-sin(snappedAngle), cos(snappedAngle), 0.0) * sin(uTime + sector) * 2.5;
-            targetVel = (node + orbit - pos) * 5.5 * uProgress * uReturnForce;
-            targetVel += curlNoise(pos * 0.2 + uTime * 0.25) * 8.0 * uTurbulence * uProgress;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 5.0 * uReturnForce;
-        } else if (uMode == 11) {
-            // Veil Ribbons: silk-like wave bands flowing across the subject
-            float ribbon = sin(basePos.x * 1.6 + uTime * 1.3) + cos(basePos.y * 1.1 - uTime * 0.9);
-            vec3 waveTarget = basePos + vec3(
-                sin(basePos.y * 1.4 + uTime) * 2.8,
-                ribbon * 1.5,
-                cos(basePos.x * 1.2 - uTime * 0.6) * 3.2
-            ) * uProgress * uIntensity;
-            vec3 flow = vec3(1.0, sin(uTime + basePos.x) * 0.35, cos(uTime + basePos.y) * 0.35) * 7.0;
-            targetVel = (waveTarget - pos) * 5.0 * uReturnForce + flow * uProgress;
-            targetVel += curlNoise(pos * 0.07 + uTime * 0.18) * 12.0 * uTurbulence * uProgress;
-        } else if (uMode == 12) {
-            // Mandala Bloom: kaleidoscopic polar symmetry around the center
-            vec3 planar = vec3(basePos.x, basePos.y, 0.0);
-            float angle = atan(planar.y, planar.x);
-            float radius = length(planar.xy);
-            float petals = 8.0;
-            float folded = abs(mod(angle + 3.14159, 6.28318 / petals) - 3.14159 / petals);
-            float mandalaAngle = folded * petals + uTime * 0.25;
-            float bloom = 1.0 + sin(radius * 2.4 - uTime * 2.0) * 0.18 * uProgress;
-            vec3 mandala = vec3(cos(mandalaAngle), sin(mandalaAngle), sin(angle * petals) * 0.8) * radius * bloom;
-            targetVel = (mandala - pos) * 6.0 * uProgress * uReturnForce;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 4.0 * uReturnForce;
-            targetVel += curlNoise(pos * 0.1 + uTime * 0.35) * 5.0 * uTurbulence * uProgress;
-        } else if (uMode == 13) {
-            // Golden Finale: upward celebration burst with a readable late-stage return
-            vec3 outward = normalize(basePos + vec3(0.001)) * 36.0 * uIntensity;
-            vec3 lift = vec3(0.0, 34.0, 0.0) * smoothstep(0.15, 1.0, uProgress);
-            vec3 sparkle = snoiseVec3(pos * 0.35 + uTime * 1.8) * 38.0 * uTurbulence;
-            targetVel = (outward + lift + sparkle) * uProgress;
-            targetVel += (basePos - pos) * (1.0 - uProgress) * 7.0 * uReturnForce;
-        }
-    }
-
-    // --- Audio Reactivity ---
-    // If there's an audio pulse, explode outward from the center
-    if (uAudioPulse > 0.05) {
-        vec3 explodeDir = normalize(pos + vec3(0.001));
-        float force = uAudioPulse * 60.0 * uIntensity;
-        targetVel += explodeDir * force + snoiseVec3(pos * 0.5) * force * 0.5;
+        // Logo Morph only
+        vec3 targetPos = texture2D(textureTargetPosition, uv).xyz;
+        vec3 finalPos = mix(basePos, targetPos, uProgress);
+        
+        // Middle bump peaks at uProgress = 0.5 (set uIntensity and uTurbulence to 0.0 to disable explosion/shaking)
+        float middleBump = sin(uProgress * 3.14159);
+        
+        // Outward force and curl noise turbulence
+        vec3 outward = normalize(basePos + vec3(0.001)) * 40.0 * uIntensity;
+        vec3 turbulence = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
+        vec3 explosionForce = (outward + turbulence) * middleBump;
+        
+        targetVel = (finalPos - pos) * 8.0 * uReturnForce + explosionForce;
     }
 
     // Damping integral equation (vel = vel * drag + acceleration)
-    // Increased drag (lower coefficient) to prevent particles flying away too fast
     vel = vel * 0.88 + targetVel * 0.12;
     
     gl_FragColor = vec4(vel, 1.0);
@@ -282,26 +155,9 @@ void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
     vec3 vel = texture2D(textureVelocity, uv).xyz;
-    vec3 basePos = texture2D(textureBasePosition, uv).xyz;
     
     // Update position
     pos += vel * 0.016; // Assuming 60fps dt
-    
-    // Mode 5 (Digital Rain): respawn at top when they fall too low
-    if (uMode == 5 && uProgress > 0.5) {
-        if (pos.y < -50.0) {
-            pos.y = 50.0 + (pos.y + 50.0); // Wrap around smoothly
-            // Reset x and z to base to avoid drifting forever
-            pos.x = basePos.x;
-            pos.z = basePos.z;
-        }
-    } else if (uMode == 7 && uProgress > 0.5) {
-        // Ash mode: scatter far away, respawn randomly near base center
-        if (length(pos) > 150.0) {
-            // Using a simple pseudo-random function based on basePos
-            pos = basePos + vec3(sin(uTime*10.0 + basePos.x)*20.0, cos(uTime*10.0 + basePos.y)*20.0, sin(uTime*10.0 + basePos.z)*20.0);
-        }
-    }
     
     gl_FragColor = vec4(pos, 1.0);
 }
@@ -513,24 +369,13 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     }
                 `,
                 fragmentShader: `
-                    uniform int uRenderMode;
                     varying vec3 vColor;
                     void main() {
                         vec2 xy = gl_PointCoord.xy - vec2(0.5);
                         float ll = length(xy);
                         if(ll > 0.5) discard;
                         float alpha = smoothstep(0.5, 0.1, ll) * 0.25;
-                        vec3 tint = vec3(1.0);
-                        if (uRenderMode == 10) {
-                            tint = vec3(0.72, 0.82, 1.0);
-                        } else if (uRenderMode == 11) {
-                            tint = vec3(0.92, 0.86, 1.0);
-                        } else if (uRenderMode == 12) {
-                            tint = vec3(1.0, 0.78, 0.95);
-                        } else if (uRenderMode == 13) {
-                            tint = vec3(0.9, 0.95, 1.0); // Silver white
-                        }
-                        gl_FragColor = vec4(vColor * tint, alpha);
+                        gl_FragColor = vec4(vColor, alpha);
                     }
                 `,
                 transparent: true,
@@ -731,10 +576,15 @@ export function updateGPGPU(time, appState, audioPulse = 0.0) {
     velocityUniforms.uMode.value = appState.vectorFieldMode;
     
     if (particleMaterial) {
-        particleMaterial.uniforms.uGlobalScale.value = appState.logoScale;
+        // Interpolate scale dynamically between 0.6 (Rose) and 2.0 (LOGO) based on progress
+        const baseScale = 0.6;
+        const targetScale = 2.0;
+        const currentScale = baseScale + (targetScale - baseScale) * appState.uProgress;
+        particleMaterial.uniforms.uGlobalScale.value = currentScale;
+        
         particleMaterial.uniforms.pointSize.value = appState.pointSize ?? 0.8;
         particleMaterial.uniforms.uRenderMode.value = appState.vectorFieldMode ?? 0;
-        particleMaterial.uniforms.uRotationAngle.value = time * 0.2;
+        particleMaterial.uniforms.uRotationAngle.value = time * 0.15; // Slow self-rotation speed
         particleMaterial.uniforms.uProgress.value = appState.uProgress;
     }
 

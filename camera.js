@@ -83,9 +83,9 @@ export function updateCamera(deltaTime, appState, boundingBox) {
         boundingBox.getCenter(focusTarget);
     }
     
-    // Speed up camera rotation when interacting
+    // Slow down and freeze camera breathing as uProgress morphs to 1.0 (keeping the LOGO perfectly static)
     if (timeline) {
-        timeline.timeScale(1.0 + appState.uProgress * 3.0);
+        timeline.timeScale(1.0 - appState.uProgress);
     }
 
     if (appState.cameraMode === 'auto') {

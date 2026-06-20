@@ -5,10 +5,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260620_v8';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260620_v8';
-import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260620_v8';
-import { updateAudio, AudioState } from './audio.js?v=20260620_v8';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260621_wedding';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260621_wedding';
+import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260621_wedding';
 
 let scene, renderer, composer, camera;
 let boundingBox;
@@ -96,11 +95,8 @@ function animate(time) {
     // 2. Update Camera (GSAP + Frustum Fitting)
     updateCamera(deltaTime, AppState, boundingBox);
 
-    // 3. Update Audio Reactivity
-    updateAudio();
-
-    // 4. Update GPGPU (Compute shaders)
-    updateGPGPU(timeSec, AppState, AudioState.audioPulse);
+    // 3. Update GPGPU (Compute shaders)
+    updateGPGPU(timeSec, AppState);
 
     // 4. Render with Post-Processing
     composer.render(deltaTime);
