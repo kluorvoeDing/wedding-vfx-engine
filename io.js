@@ -1,6 +1,6 @@
 // io.js - I/O & VJ Performance (狀態機與現場交互 - 婚禮特製簡化版)
-import { getModeConfig } from './modes.js?v=20260621_wedding_v2';
-import { getParticleSettings } from './particleSettings.js?v=20260621_wedding_v2';
+import { getModeConfig } from './modes.js?v=20260621_wedding_v4';
+import { getParticleSettings } from './particleSettings.js?v=20260621_wedding_v4';
 
 const progressSlider = document.getElementById('uProgress');
 const cameraModeSelect = document.getElementById('cameraMode');
@@ -116,11 +116,11 @@ export async function initIO({ triggerRebuild } = {}) {
                 });
             }
 
-            // Animate targetProgress, logoScale, and pointSize to LOGO defaults
+            // Animate targetProgress, logoScale, and pointSize to LOGO defaults (Scale = 15% -> 0.46, PointSize = 15% -> 0.55)
             progressTween = gsap.to(AppState, {
                 targetProgress: 1.0,
-                logoScale: 0.4,
-                pointSize: 0.43,
+                logoScale: 0.46,
+                pointSize: 0.55,
                 duration: 4.0,
                 ease: "power1.inOut",
                 onUpdate: () => {

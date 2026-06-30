@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getParticleSettings } from './particleSettings.js?v=20260620_v8';
+import { getParticleSettings } from './particleSettings.js?v=20260621_wedding_v4';
 
 let gpuCompute;
 let posVariable, velVariable;
@@ -111,16 +111,21 @@ void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
     vec3 vel = texture2D(textureVelocity, uv).xyz;
-    vec3 basePos = texture2D(textureBasePosition, uv).xyz; // original vertex
+    
+    vec4 basePos4 = texture2D(textureBasePosition, uv);
+    vec3 basePos = basePos4.xyz;
+    float pType = basePos4.w; // Type flag: 1.0=Rose, 2.0=Drifting Star, 3.0=Constellation
 
     vec3 targetVel = vec3(0.0);
-    bool isStar = abs(basePos.z) > 5.0; // Padded particles have large Z bounds
 
-    if (isStar) {
+    if (pType > 2.5) {
+        // Constellation Star: static in Rose state, morphs to LOGO
+        vec3 targetPos = texture2D(textureTargetPosition, uv).xyz;
+        vec3 finalPos = mix(basePos, targetPos, uProgress);
+        targetVel = (finalPos - pos) * 8.0 * uReturnForce;
+    } else if (pType > 1.5) {
         // Drifting stars: slowly move around using curl noise
         targetVel = curlNoise(pos * 0.02 + uTime * 0.05) * 5.0;
-        
-        // Slight gravity to center if they wander too far
         targetVel -= pos * 0.01;
     } else {
         // Logo Morph only
@@ -141,7 +146,7 @@ void main() {
     // Damping integral equation (vel = vel * drag + acceleration)
     vel = vel * 0.88 + targetVel * 0.12;
     
-    gl_FragColor = vec4(vel, 1.0);
+    gl_FragColor = vec4(vel, pType);
 }
 `;
 
@@ -153,15 +158,117 @@ uniform sampler2D textureBasePosition;
 
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
-    vec3 pos = texture2D(texturePosition, uv).xyz;
+    vec4 pos4 = texture2D(texturePosition, uv);
+    vec3 pos = pos4.xyz;
     vec3 vel = texture2D(textureVelocity, uv).xyz;
     
     // Update position
     pos += vel * 0.016; // Assuming 60fps dt
     
-    gl_FragColor = vec4(pos, 1.0);
+    // Preserve type flag in 4th channel
+    float pType = pos4.w;
+    if (pType == 0.0) {
+        pType = texture2D(textureBasePosition, uv).w;
+    }
+    
+    gl_FragColor = vec4(pos, pType);
 }
 `;
+
+function getConstellationPoints() {
+    const points = [];
+    
+    // Leo: center at (12, 0, -4)
+    const leoCenter = new THREE.Vector3(12, 0, -4);
+    const leoStars = {
+        regulus: new THREE.Vector3(0, -2.5, 0),
+        denebola: new THREE.Vector3(5, 0.5, 0),
+        algieba: new THREE.Vector3(1, 2, 0),
+        zosma: new THREE.Vector3(4, 0.5, 0),
+        chertan: new THREE.Vector3(3.8, -1.5, 0),
+        algenubi: new THREE.Vector3(-1.2, 3, 0),
+        rasalas: new THREE.Vector3(-0.2, 3.8, 0),
+        adhafera: new THREE.Vector3(2, 3.5, 0),
+        subra: new THREE.Vector3(-1.2, -1.8, 0)
+    };
+    // Shift relative stars to center
+    Object.keys(leoStars).forEach(k => leoStars[k].add(leoCenter));
+    
+    const leoConnections = [
+        [leoStars.regulus, leoStars.chertan],
+        [leoStars.chertan, leoStars.zosma],
+        [leoStars.zosma, leoStars.denebola],
+        [leoStars.zosma, leoStars.algieba],
+        [leoStars.algieba, leoStars.adhafera],
+        [leoStars.adhafera, leoStars.rasalas],
+        [leoStars.rasalas, leoStars.algenubi],
+        [leoStars.regulus, leoStars.subra],
+        [leoStars.regulus, leoStars.algieba]
+    ];
+
+    // Aquarius: center at (-12, 0, -4)
+    const aqCenter = new THREE.Vector3(-12, 0, -4);
+    const aqStars = {
+        sadalmelik: new THREE.Vector3(0.5, 1, 0),
+        sadalsuud: new THREE.Vector3(2, 2.5, 0),
+        sadachbia: new THREE.Vector3(-0.8, 0.8, 0),
+        skat: new THREE.Vector3(2, -2.5, 0),
+        albali: new THREE.Vector3(4, 0, 0),
+        ancha: new THREE.Vector3(2.4, -0.8, 0),
+        situla: new THREE.Vector3(-1.2, -1, 0),
+        eta: new THREE.Vector3(-2, 0, 0),
+        phi: new THREE.Vector3(-3.2, -0.8, 0),
+        lambda: new THREE.Vector3(-4, -1.8, 0),
+        a98: new THREE.Vector3(-4.5, -3.5, 0)
+    };
+    Object.keys(aqStars).forEach(k => aqStars[k].add(aqCenter));
+    
+    const aqConnections = [
+        [aqStars.sadalmelik, aqStars.sadachbia],
+        [aqStars.sadachbia, aqStars.situla],
+        [aqStars.situla, aqStars.phi],
+        [aqStars.phi, aqStars.lambda],
+        [aqStars.lambda, aqStars.a98],
+        [aqStars.sadalmelik, aqStars.sadalsuud],
+        [aqStars.sadalsuud, aqStars.albali],
+        [aqStars.sadalsuud, aqStars.ancha],
+        [aqStars.ancha, aqStars.skat],
+        [aqStars.ancha, aqStars.albali]
+    ];
+
+    // Function to interpolate points along connections with low density
+    const interpolate = (p1, p2, density = 10) => {
+        const dist = p1.distanceTo(p2);
+        const steps = Math.max(3, Math.floor(dist * density));
+        for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            const pt = new THREE.Vector3().lerpVectors(p1, p2, t);
+            pt.x += (Math.random() - 0.5) * 0.08;
+            pt.y += (Math.random() - 0.5) * 0.08;
+            pt.z += (Math.random() - 0.5) * 0.08;
+            points.push({ pos: pt, type: 3.0 }); // 3.0 = Non-main connection star
+        }
+    };
+
+    // Interpolate connections
+    leoConnections.forEach(([p1, p2]) => interpolate(p1, p2, 10));
+    aqConnections.forEach(([p1, p2]) => interpolate(p1, p2, 10));
+
+    // Also add the main stars as brighter star clusters with 80 particles
+    const addMainStar = (starPos) => {
+        for (let j = 0; j < 80; j++) {
+            const pt = starPos.clone();
+            pt.x += (Math.random() - 0.5) * 0.15;
+            pt.y += (Math.random() - 0.5) * 0.15;
+            pt.z += (Math.random() - 0.5) * 0.15;
+            points.push({ pos: pt, type: 4.0 }); // 4.0 = Main star cluster (steady lit)
+        }
+    };
+    Object.values(leoStars).forEach(addMainStar);
+    Object.values(aqStars).forEach(addMainStar);
+
+    return points;
+}
 
 export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', options = {}) {
     return new Promise((resolve) => {
@@ -210,9 +317,11 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
             }
 
             boundingBox.copy(tempBox);
-            pointsCount = vertices.length / 3;
-            TEXTURE_WIDTH = Math.ceil(Math.sqrt(pointsCount));
-            // Pad points count to fill the texture exactly
+            
+            const constellationPoints = getConstellationPoints();
+            // Calculate a safe minTotalParticles to include all rose vertices + constellation points + 2000 drifting stars
+            const minTotalParticles = (vertices.length / 3) + constellationPoints.length + 2000;
+            TEXTURE_WIDTH = Math.ceil(Math.sqrt(minTotalParticles));
             pointsCount = TEXTURE_WIDTH * TEXTURE_WIDTH;
 
             // 1. Setup GPGPU
@@ -230,48 +339,59 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
 
             for (let i = 0; i < pointsCount; i++) {
                 let x = 0, y = 0, z = 0;
+                let type = 1.0; // 1.0 = Rose, 2.0 = Drifting Star, 3.0 = Connection Star, 4.0 = Main Constellation Star
+                
                 if (i * 3 < vertices.length) {
                     x = vertices[i*3];
                     y = vertices[i*3+1];
                     z = vertices[i*3+2];
+                    type = 1.0;
                 } else {
-                    // Padded vertices (sparse stars in background)
-                    x = (Math.random() - 0.5) * 200;
-                    y = (Math.random() - 0.5) * 200;
-                    z = (Math.random() - 0.5) * 200;
-                    // Ensure stars are far enough on Z axis to be flagged as stars by velocityShader
-                    if (Math.abs(z) <= 5.0) {
-                        z += (Math.sign(z) || 1) * 6.0;
+                    const padIdx = i - (vertices.length / 3);
+                    if (padIdx < constellationPoints.length) {
+                        const cp = constellationPoints[padIdx];
+                        x = cp.pos.x;
+                        y = cp.pos.y;
+                        z = cp.pos.z;
+                        type = cp.type;
+                    } else {
+                        // Background drifting star
+                        x = (Math.random() - 0.5) * 200;
+                        y = (Math.random() - 0.5) * 200;
+                        z = (Math.random() - 0.5) * 200;
+                        if (Math.abs(z) <= 5.0) {
+                            z += (Math.sign(z) || 1) * 6.0;
+                        }
+                        type = 2.0;
                     }
                 }
                 
                 posArr[i*4 + 0] = x;
                 posArr[i*4 + 1] = y;
                 posArr[i*4 + 2] = z;
-                posArr[i*4 + 3] = 1.0;
+                posArr[i*4 + 3] = type;
                 
                 baseArr[i*4 + 0] = x;
                 baseArr[i*4 + 1] = y;
                 baseArr[i*4 + 2] = z;
-                baseArr[i*4 + 3] = 1.0;
+                baseArr[i*4 + 3] = type;
 
                 velArr[i*4 + 0] = 0;
                 velArr[i*4 + 1] = 0;
                 velArr[i*4 + 2] = 0;
-                velArr[i*4 + 3] = 1.0;
+                velArr[i*4 + 3] = type;
 
                 if (targetVertices && targetVertices.length > 0) {
                     let tIdx = i % (targetVertices.length / 3);
-                    // Add micro jitter to prevent Z-fighting and Moire pattern on exact grid
                     targetArr[i*4 + 0] = targetVertices[tIdx*3] + (Math.random()-0.5) * 0.015;
                     targetArr[i*4 + 1] = targetVertices[tIdx*3 + 1] + (Math.random()-0.5) * 0.015;
                     targetArr[i*4 + 2] = targetVertices[tIdx*3 + 2] + (Math.random()-0.5) * 0.05;
-                    targetArr[i*4 + 3] = 1.0;
+                    targetArr[i*4 + 3] = type;
                 } else {
                     targetArr[i*4 + 0] = baseArr[i*4 + 0];
                     targetArr[i*4 + 1] = baseArr[i*4 + 1];
                     targetArr[i*4 + 2] = baseArr[i*4 + 2];
-                    targetArr[i*4 + 3] = 1.0;
+                    targetArr[i*4 + 3] = type;
                 }
             }
             
@@ -336,7 +456,8 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     uGlobalScale: { value: 0.6 },
                     uRenderMode: { value: 0 },
                     uRotationAngle: { value: 0.0 },
-                    uProgress: { value: 0.0 }
+                    uProgress: { value: 0.0 },
+                    uTime: { value: 0.0 }
                 },
                 vertexColors: true,
                 vertexShader: `
@@ -348,18 +469,25 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     uniform float uProgress;
                     // uv and color are automatically injected by Three.js ShaderMaterial
                     varying vec3 vColor;
+                    varying float vType;
+                    varying vec2 vUv;
                     void main() {
                         vec4 pos = texture2D(texturePosition, uv);
                         vec3 rotatedPos = pos.xyz;
+                        float pType = pos.w;
+                        vType = pType;
+                        vUv = uv;
                         
                         // Y-axis rotation (spindle rotation along stem), fades out as uProgress reaches 1.0
                         float angle = uRotationAngle * (1.0 - uProgress);
-                        float cosA = cos(angle);
-                        float sinA = sin(angle);
-                        float rx = rotatedPos.x * cosA - rotatedPos.z * sinA;
-                        float rz = rotatedPos.x * sinA + rotatedPos.z * cosA;
-                        rotatedPos.x = rx;
-                        rotatedPos.z = rz;
+                        if (pType < 1.5) {
+                            float cosA = cos(angle);
+                            float sinA = sin(angle);
+                            float rx = rotatedPos.x * cosA - rotatedPos.z * sinA;
+                            float rz = rotatedPos.x * sinA + rotatedPos.z * cosA;
+                            rotatedPos.x = rx;
+                            rotatedPos.z = rz;
+                        }
                         
                         vec4 scaledPos = vec4(rotatedPos * uGlobalScale, 1.0);
                         vec4 mvPosition = modelViewMatrix * scaledPos;
@@ -369,12 +497,52 @@ export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', 
                     }
                 `,
                 fragmentShader: `
+                    uniform float uTime;
+                    uniform float uProgress;
                     varying vec3 vColor;
+                    varying float vType;
+                    varying vec2 vUv;
+
+                    float hash(float n) {
+                        return fract(sin(n) * 43758.5453123);
+                    }
+
                     void main() {
                         vec2 xy = gl_PointCoord.xy - vec2(0.5);
                         float ll = length(xy);
                         if(ll > 0.5) discard;
-                        float alpha = smoothstep(0.5, 0.1, ll) * 0.25;
+                        
+                        // Base alpha from point shape
+                        float alpha = smoothstep(0.5, 0.1, ll) * 0.5;
+                        
+                        if (vType > 1.5) {
+                            // Star particle
+                            float seed = hash(vUv.x * 12.9898 + vUv.y * 78.233);
+                            
+                            if (vType > 3.5) {
+                                // Main star cluster (type 4.0) - steady lit (constant)
+                                float twinkle = 0.95 + 0.05 * sin(uTime * 12.0 + seed * 6.28); // subtle realistic scintillation
+                                alpha *= twinkle;
+                            } else if (vType > 2.5) {
+                                // Connection Star (type 3.0) - alternating/staggered twinkle in turn
+                                float speed = 1.5 + seed * 2.5;
+                                float phase = seed * 6.28;
+                                float twinkle = 0.15 + 0.85 * pow(0.5 + 0.5 * sin(uTime * speed + phase), 3.0);
+                                
+                                float twinkleBlend = mix(twinkle, 1.0, uProgress);
+                                alpha *= twinkleBlend;
+                            } else {
+                                // Background drifting star (type 2.0) - gentle twinkle & fade out
+                                float speed = 1.0 + seed * 2.0;
+                                float phase = seed * 6.28;
+                                float twinkle = 0.3 + 0.7 * sin(uTime * speed + phase);
+                                alpha *= twinkle * (1.0 - uProgress);
+                            }
+                        } else {
+                            // Rose/LOGO particle (type 1.0)
+                            alpha *= 0.6;
+                        }
+                        
                         gl_FragColor = vec4(vColor, alpha);
                     }
                 `,
@@ -581,6 +749,7 @@ export function updateGPGPU(time, appState, audioPulse = 0.0) {
         particleMaterial.uniforms.uRenderMode.value = appState.vectorFieldMode ?? 0;
         particleMaterial.uniforms.uRotationAngle.value = time * 0.15; // Slow self-rotation speed
         particleMaterial.uniforms.uProgress.value = appState.uProgress;
+        particleMaterial.uniforms.uTime.value = time;
     }
 
     positionUniforms.uTime.value = time;

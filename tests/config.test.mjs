@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import { MODE_CONFIGS, getModeConfig } from '../modes.js';
 import { getParticleSettings } from '../particleSettings.js';
 
-test('mode registry exposes linked controls and a wedding-focused mode', () => {
-    assert.ok(MODE_CONFIGS.length >= 14);
+test('mode registry exposes the wedding logo-only mode', () => {
+    assert.equal(MODE_CONFIGS.length, 1);
 
     for (const mode of MODE_CONFIGS) {
         assert.equal(Number.isInteger(mode.id), true);
         assert.equal(typeof mode.label, 'string');
+        assert.equal(typeof mode.shaderMode, 'number');
+        assert.equal(typeof mode.targetProgress, 'number');
         assert.equal(typeof mode.params.intensity, 'number');
         assert.equal(typeof mode.params.turbulence, 'number');
         assert.equal(typeof mode.params.returnForce, 'number');
@@ -17,12 +19,9 @@ test('mode registry exposes linked controls and a wedding-focused mode', () => {
     }
 
     assert.equal(getModeConfig(6).label.includes('LOGO'), true);
-    assert.equal(getModeConfig(9).shaderMode, 9);
-    assert.equal(getModeConfig(9).label.includes('誓言'), true);
-    assert.equal(getModeConfig(10).label.includes('星圖'), true);
-    assert.equal(getModeConfig(11).label.includes('頭紗'), true);
-    assert.equal(getModeConfig(12).label.includes('萬花筒'), true);
-    assert.equal(getModeConfig(13).label.includes('金粉'), true);
+    assert.equal(getModeConfig(6).shaderMode, 6);
+    assert.equal(getModeConfig(999).shaderMode, 6);
+    assert.equal(getModeConfig(6).targetProgress, 1.0);
 });
 
 test('particle density settings trade quality for real particle count', () => {

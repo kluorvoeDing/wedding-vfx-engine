@@ -5,9 +5,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260621_wedding_v2';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260621_wedding_v2';
-import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260621_wedding_v2';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260621_wedding_v4';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260621_wedding_v4';
+import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260621_wedding_v4';
 
 let scene, renderer, composer, camera;
 let boundingBox;
