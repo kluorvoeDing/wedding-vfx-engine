@@ -5,14 +5,13 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260704_wedding_v5';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260704_wedding_v5';
-import { initIO, updateIO, AppState, getCurrentImageUrl, getInitialBuildOptions, markSceneReady } from './io.js?v=20260704_wedding_v5';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260705_wedding_v6';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260705_wedding_v6';
+import { initIO, updateIO, AppState, getBuildConfig, markSceneReady } from './io.js?v=20260705_wedding_v6';
 
 let scene, renderer, composer, camera;
 let boundingBox;
 let lastTime = 0;
-let rebuildVersion = 0;
 
 async function init() {
     // 1. Scene Setup
@@ -48,10 +47,10 @@ async function init() {
     composer.addPass(bloomPass);
 
     // 3. I/O Setup (keyboard state machine)
-    await initIO({ triggerRebuild });
+    await initIO();
 
-    // 4. GPGPU Data Pipeline Setup (initial build = locked Rose parameters)
-    const gpuData = await initGPGPU(renderer, scene, getCurrentImageUrl(), getInitialBuildOptions());
+    // 4. GPGPU Data Pipeline Setup: 一次建好 rose + morph 兩套常駐模擬
+    const gpuData = await initGPGPU(renderer, scene, getBuildConfig());
     boundingBox = gpuData.boundingBox;
     markSceneReady(gpuData);
 
@@ -87,14 +86,6 @@ function animate(time) {
 
     // 4. Render with Post-Processing
     composer.render(deltaTime);
-}
-
-export async function triggerRebuild(imageUrl, options) {
-    const version = ++rebuildVersion;
-    const gpuData = await initGPGPU(renderer, scene, imageUrl, options);
-    if (version !== rebuildVersion) return null;
-    boundingBox = gpuData.boundingBox;
-    return gpuData;
 }
 
 // Kick off

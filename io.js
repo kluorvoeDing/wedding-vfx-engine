@@ -1,5 +1,6 @@
 // io.js - 婚禮現場控制 (鍵盤快捷鍵狀態機: 空白鍵切換玫瑰/LOGO, F 切換全螢幕)
-import { getParticleSettings } from './particleSettings.js?v=20260704_wedding_v5';
+import { getParticleSettings } from './particleSettings.js?v=20260705_wedding_v6';
+import { setActiveParticles } from './gpgpu.js?v=20260705_wedding_v6';
 
 const MODEL_URL = 'public/papa_meilland_rose/scene.gltf';
 const LOGO_URL = 'public/logo.png';
@@ -7,8 +8,10 @@ const LOGO_URL = 'public/logo.png';
 // 鎖定的最佳參數
 const ROSE = { density: 5, scale: 1.2, pointSize: 2.0 };
 const LOGO = { density: 1, scale: 0.46, pointSize: 0.55 };
-const TRANSITION_SECS = 4.0;
+const TRANSITION_SECS = 2.0;
+const TRANSITION_EASE = 'power2.out'; // 快出慢收: 按下瞬間就看得到動靜
 const ROTATION_SPEED = 0.15; // rad/s
+const PROGRESS_GAIN = 12.0;  // uProgress 追隨速度 (越高越即時)
 
 export const AppState = {
     uProgress: 0,
@@ -20,25 +23,28 @@ export const AppState = {
     // 轉場中段的流體力場 (velocity shader 的 middleBump 保證靜止時完全無作用)
     fieldIntensity: 0.05,
     turbulence: 0.4,
-    returnForce: 1.0
+    returnForce: 2.0 // 較強的貼合力,縮短轉場尾段的沉降時間
 };
 
-let rebuildScene = async () => null;
 let sceneReady = false;
 let isBusy = false;
 let currentState = 'rose';
 let roseCount = 0;
-let logoCount = 0;
+let morphCount = 0;
 
-export const getCurrentImageUrl = () => MODEL_URL;
-
-export function getInitialBuildOptions() {
-    return { ...getParticleSettings(ROSE.density), targetImageUrl: LOGO_URL };
+export function getBuildConfig() {
+    return {
+        modelUrl: MODEL_URL,
+        logoUrl: LOGO_URL,
+        rose: getParticleSettings(ROSE.density),
+        morph: getParticleSettings(LOGO.density)
+    };
 }
 
 export function markSceneReady(gpuData) {
-    if (gpuData && gpuData.pointsCount) {
-        roseCount = gpuData.pointsCount;
+    if (gpuData) {
+        roseCount = gpuData.roseVisibleCount || 0;
+        morphCount = gpuData.morphVisibleCount || 0;
     }
     sceneReady = true;
 }
@@ -63,15 +69,9 @@ function normalizeRotation() {
 }
 
 async function transitionToLogo() {
-    // 先以高密度重建 (畫面保留舊粒子直到新資源就緒,不會黑屏)
-    const gpuData = await rebuildScene(MODEL_URL, {
-        ...getParticleSettings(LOGO.density),
-        targetImageUrl: LOGO_URL
-    });
-    if (gpuData && gpuData.pointsCount) {
-        logoCount = gpuData.pointsCount;
-        AppState.pointSize = equivalentPointSize(ROSE.pointSize, roseCount, logoCount);
-    }
+    // 瞬間切到高密度形變系統 (常駐同步運行,零重建),等亮度換算避免亮度跳動
+    setActiveParticles('morph');
+    AppState.pointSize = equivalentPointSize(ROSE.pointSize, roseCount, morphCount);
 
     normalizeRotation();
     await gsap.to(AppState, {
@@ -80,28 +80,22 @@ async function transitionToLogo() {
         pointSize: LOGO.pointSize,
         rotationAngle: 0,
         duration: TRANSITION_SECS,
-        ease: 'power1.inOut'
+        ease: TRANSITION_EASE
     });
 }
 
 async function transitionToRose() {
-    // 回程仍是高密度粒子,先過渡到等亮度的大小,重建後再無感切回鎖定值
-    const arrivalPointSize = equivalentPointSize(ROSE.pointSize, roseCount, logoCount || roseCount);
+    const arrivalPointSize = equivalentPointSize(ROSE.pointSize, roseCount, morphCount || roseCount);
     await gsap.to(AppState, {
         targetProgress: 0.0,
         logoScale: ROSE.scale,
         pointSize: arrivalPointSize,
         duration: TRANSITION_SECS,
-        ease: 'power1.inOut'
+        ease: TRANSITION_EASE
     });
 
-    const gpuData = await rebuildScene(MODEL_URL, {
-        ...getParticleSettings(ROSE.density),
-        targetImageUrl: LOGO_URL
-    });
-    if (gpuData && gpuData.pointsCount) {
-        roseCount = gpuData.pointsCount;
-    }
+    // 到站後瞬間切回待機系統 (它全程停在玫瑰形狀,無縫接手)
+    setActiveParticles('rose');
     AppState.pointSize = ROSE.pointSize;
 }
 
@@ -133,11 +127,7 @@ function toggleFullscreen() {
     }
 }
 
-export async function initIO({ triggerRebuild } = {}) {
-    if (typeof triggerRebuild === 'function') {
-        rebuildScene = triggerRebuild;
-    }
-
+export async function initIO() {
     window.addEventListener('keydown', (e) => {
         if (e.repeat) return;
         if (e.code === 'Space') {
@@ -149,16 +139,15 @@ export async function initIO({ triggerRebuild } = {}) {
     });
 
     // 現場救援用除錯掛鉤 (可於 DevTools console 手動觸發切換)
-    window.__vfx = { AppState, toggleState, version: '20260704_wedding_v5' };
+    window.__vfx = { AppState, toggleState, version: '20260705_wedding_v6' };
 }
 
 // Update loop called by main.js
 export function updateIO(deltaTime) {
     // Clamp 插值量,分頁休眠喚醒後的大 delta 不會讓 uProgress 衝出範圍
-    const amt = Math.min(1, 5.0 * deltaTime);
+    const amt = Math.min(1, PROGRESS_GAIN * deltaTime);
     AppState.uProgress = lerp(AppState.uProgress, AppState.targetProgress, amt);
 
     // 玫瑰自轉: CPU 累積角度,隨形變進度自然減速停止
-    // (取代舊的 time * 0.15 反推歸零法 —— 那會依開頁時長回轉 N 圈)
     AppState.rotationAngle += ROTATION_SPEED * deltaTime * (1 - AppState.uProgress);
 }
