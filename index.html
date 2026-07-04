@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generative Art Engine</title>
+    <title>Wedding VFX Engine</title>
     <style>
         body {
             margin: 0;
@@ -20,78 +20,28 @@
             height: 100vh;
             z-index: 1;
         }
-        #vj-console {
+        #key-hint {
             position: absolute;
-            bottom: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.85);
-            padding: 20px;
-            border-radius: 8px;
-            color: #fff;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
             font-family: monospace;
-            width: 320px;
-            max-height: calc(100vh - 40px);
-            overflow-y: auto;
-            box-sizing: border-box;
-            z-index: 100;
-            border: 1px solid #333;
-            transition: transform 0.3s ease;
-        }
-        #vj-console.collapsed {
-            transform: translateY(calc(100% - 30px));
-        }
-        #console-toggle {
-            position: absolute;
-            top: 5px;
-            right: 10px;
-            background: none;
-            border: none;
-            color: white;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        .control-group {
-            margin-bottom: 15px;
-        }
-        .control-group label {
-            display: block;
-            font-size: 12px;
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #aaa;
-        }
-        .control-group input[type="range"] {
-            width: 100%;
-            cursor: pointer;
-        }
-        #webcam-container {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            width: 160px;
-            height: 120px;
-            z-index: 10;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            display: none; /* hidden by default, can be toggled */
-        }
-        #webcam-video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1);
-        }
-        .hud-text {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-            font-size: 12px;
+            font-size: 13px;
             letter-spacing: 2px;
+            color: rgba(255, 255, 255, 0.55);
+            background: rgba(0, 0, 0, 0.35);
+            padding: 10px 18px;
+            border-radius: 6px;
+            white-space: nowrap;
             pointer-events: none;
-            opacity: 0.7;
+            animation: hint-fade 1.5s ease 8s forwards;
+        }
+        @keyframes hint-fade {
+            to {
+                opacity: 0;
+                visibility: hidden;
+            }
         }
         #file-protocol-warning {
             display: none;
@@ -136,7 +86,7 @@
             }
         }
     </script>
-    
+
     <!-- GSAP -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
@@ -145,61 +95,13 @@
         <div class="message">
             <h1>請使用本機 HTTP 預覽</h1>
             <p>這個專案使用 ES modules、GLTF 與跨來源資源，直接開啟 <code>index.html</code> 會被瀏覽器 CORS 擋住。</p>
-            <p>請先啟動本機伺服器，然後開啟 <a href="http://127.0.0.1:57832/?v=20260621_wedding_v4">http://127.0.0.1:57832/?v=20260621_wedding_v4</a></p>
+            <p>請先啟動本機伺服器，然後開啟 <a href="http://127.0.0.1:57832/?v=20260704_wedding_v5">http://127.0.0.1:57832/?v=20260704_wedding_v5</a></p>
         </div>
     </div>
     <div id="canvas-container"></div>
-    
-    <div class="hud-text">
-        <div>GPGPU PARTICLE SYSTEM</div>
-        <div id="fps-counter">FPS: 0</div>
-        <div id="particle-count">PARTICLES: 0</div>
-    </div>
 
-    <div id="vj-console">
-        <button id="console-toggle">▼ 隱藏面板</button>
-        <div style="margin-top: 15px; text-align: center; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 15px;">
-            <span style="font-weight: bold; letter-spacing: 1px;">舞台特效表演控制</span>
-        </div>
-        
-        <div class="control-group">
-            <button id="btnRose" style="width: 100%; padding: 12px; background: #fff; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 14px; margin-bottom: 10px; transition: background 0.2s;">1. 顯示玫瑰花 (自轉)</button>
-            <button id="btnLogo" style="width: 100%; padding: 12px; background: #e91e63; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 14px; transition: opacity 0.2s;">2. 切換為 LOGO (靜止呈現)</button>
-        </div>
+    <div id="key-hint">空白鍵：玫瑰 ⇄ LOGO　·　F：全螢幕</div>
 
-        <div class="control-group">
-            <label for="uProgress">手動形變進度 (過渡調試)</label>
-            <input type="range" id="uProgress" min="0" max="1" step="0.01" value="0">
-        </div>
-
-        <div class="control-group">
-            <label for="particleDensity">粒子密度 (1=最高畫質, 5=最順暢)</label>
-            <input type="range" id="particleDensity" min="1" max="5" step="1" value="4">
-        </div>
-
-        <div class="control-group">
-            <label for="logoScale">整體顯示大小</label>
-            <input type="range" id="logoScale" min="0.1" max="2.5" step="0.1" value="1.2">
-        </div>
-
-        <div class="control-group">
-            <label for="pointSize">粒子亮點大小</label>
-            <input type="range" id="pointSize" min="0.2" max="2.5" step="0.05" value="1.35">
-        </div>
-
-        <div class="control-group">
-            <label for="cameraMode">運鏡模式</label>
-            <select id="cameraMode" style="width: 100%; padding: 8px; background: #222; color: white; border: 1px solid #444; border-radius: 4px;">
-                <option value="auto">自動電影運鏡</option>
-                <option value="manual">手動控制 (滑鼠拖曳)</option>
-            </select>
-        </div>
-
-        <div class="control-group" style="margin-top: 20px;">
-            <button id="enable-fullscreen" style="width: 100%; padding: 10px; background: #4CAF50; color: #fff; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 13px;">進入全螢幕模式</button>
-        </div>
-    </div>
-
-    <script type="module" src="./main.js?v=20260621_wedding_v4"></script>
+    <script type="module" src="./main.js?v=20260704_wedding_v5"></script>
 </body>
 </html>

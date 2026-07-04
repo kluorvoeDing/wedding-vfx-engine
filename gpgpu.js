@@ -1,24 +1,32 @@
-// gpgpu.js - Data Pipeline & GPGPU Core + GLSL Vector Fields
+// gpgpu.js - Data Pipeline & GPGPU Core (婚禮特製: 玫瑰 ⇄ LOGO 雙形態)
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getParticleSettings } from './particleSettings.js?v=20260621_wedding_v4';
+import { getParticleSettings } from './particleSettings.js?v=20260704_wedding_v5';
 
 let gpuCompute;
 let posVariable, velVariable;
 let positionUniforms, velocityUniforms;
 let particleGeometry, particleMaterial, particleMesh;
+let extraTextures = [];
 let boundingBox = new THREE.Box3();
 let pointsCount = 0;
+let TEXTURE_WIDTH = 512;
 
-// Base width/height of the Data Texture. Will be calculated based on vertex count.
-let TEXTURE_WIDTH = 512; 
+// 重建協調與素材快取:
+// 重建期間畫面保留舊粒子,新資源就緒後才原子交換;過期的並發重建會被 buildCounter 作廢
+let buildCounter = 0;
+let cachedModel = null; // { url, vertices, colors, box }
+let cachedLogo = null;  // { url, imgData, width, height }
+let starPool = null;    // 固定星點座標池,重建時背景星空不重新洗牌
+
+const STAR_POOL_SIZE = 8192;
 
 const glslNoise = `
 // 4D Simplex Noise
 vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
 vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
-float snoise(vec3 v){ 
+float snoise(vec3 v){
   const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
   const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
   vec3 i  = floor(v + dot(v, C.yyy) );
@@ -30,10 +38,10 @@ float snoise(vec3 v){
   vec3 x1 = x0 - i1 + 1.0 * C.xxx;
   vec3 x2 = x0 - i2 + 2.0 * C.xxx;
   vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
-  i = mod(i, 289.0 ); 
-  vec4 p = permute( permute( permute( 
+  i = mod(i, 289.0 );
+  vec4 p = permute( permute( permute(
              i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-           + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
            + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
   float n_ = 1.0/7.0; // N=7
   vec3  ns = n_ * D.wyz - D.xzx;
@@ -61,7 +69,7 @@ float snoise(vec3 v){
   p3 *= norm.w;
   vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
   m = m * m;
-  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
+  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
                                 dot(p2,x2), dot(p3,x3) ) );
 }
 
@@ -98,664 +106,522 @@ vec3 curlNoise( vec3 p ){
 const velocityShader = `
 uniform float uTime;
 uniform float uProgress;
-uniform float uAudioPulse; // Audio Reactivity (Not active in this branch, kept for struct alignment)
 uniform float uIntensity;
 uniform float uTurbulence;
 uniform float uReturnForce;
-uniform int uMode; // Vector Field mode (Hardcoded to 6)
 uniform sampler2D textureBasePosition;
-uniform sampler2D textureTargetPosition; // New target for LOGO Morph
+uniform sampler2D textureTargetPosition;
 ${glslNoise}
 
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
     vec3 vel = texture2D(textureVelocity, uv).xyz;
-    
+
     vec4 basePos4 = texture2D(textureBasePosition, uv);
     vec3 basePos = basePos4.xyz;
-    float pType = basePos4.w; // Type flag: 1.0=Rose, 2.0=Drifting Star, 3.0=Constellation
+    float pType = basePos4.w; // 1.0 = Rose/LOGO, 2.0 = Drifting Star
 
     vec3 targetVel = vec3(0.0);
 
-    if (pType > 2.5) {
-        // Constellation Star: static in Rose state, morphs to LOGO
-        vec3 targetPos = texture2D(textureTargetPosition, uv).xyz;
-        vec3 finalPos = mix(basePos, targetPos, uProgress);
-        targetVel = (finalPos - pos) * 8.0 * uReturnForce;
-    } else if (pType > 1.5) {
+    if (pType > 1.5) {
         // Drifting stars: slowly move around using curl noise
         targetVel = curlNoise(pos * 0.02 + uTime * 0.05) * 5.0;
         targetVel -= pos * 0.01;
     } else {
-        // Logo Morph only
+        // Rose <-> LOGO morph with fluid flow in the middle of the transition
         vec3 targetPos = texture2D(textureTargetPosition, uv).xyz;
         vec3 finalPos = mix(basePos, targetPos, uProgress);
-        
-        // Middle bump peaks at uProgress = 0.5 (set uIntensity and uTurbulence to 0.0 to disable explosion/shaking)
+
+        // middleBump peaks at uProgress = 0.5 and vanishes at both rest states,
+        // so the flow forces only act while morphing
         float middleBump = sin(uProgress * 3.14159);
-        
-        // Outward force and curl noise turbulence
         vec3 outward = normalize(basePos + vec3(0.001)) * 40.0 * uIntensity;
-        vec3 turbulence = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
-        vec3 explosionForce = (outward + turbulence) * middleBump;
-        
-        targetVel = (finalPos - pos) * 8.0 * uReturnForce + explosionForce;
+        vec3 flow = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
+        vec3 transitionForce = (outward + flow) * middleBump;
+
+        targetVel = (finalPos - pos) * 8.0 * uReturnForce + transitionForce;
     }
 
     // Damping integral equation (vel = vel * drag + acceleration)
     vel = vel * 0.88 + targetVel * 0.12;
-    
+
     gl_FragColor = vec4(vel, pType);
 }
 `;
 
 const positionShader = `
-uniform float uTime;
-uniform int uMode;
-uniform float uProgress;
 uniform sampler2D textureBasePosition;
 
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec4 pos4 = texture2D(texturePosition, uv);
-    vec3 pos = pos4.xyz;
-    vec3 vel = texture2D(textureVelocity, uv).xyz;
-    
-    // Update position
-    pos += vel * 0.016; // Assuming 60fps dt
-    
+    vec3 pos = pos4.xyz + texture2D(textureVelocity, uv).xyz * 0.016;
+
     // Preserve type flag in 4th channel
     float pType = pos4.w;
     if (pType == 0.0) {
         pType = texture2D(textureBasePosition, uv).w;
     }
-    
+
     gl_FragColor = vec4(pos, pType);
 }
 `;
 
-function getConstellationPoints() {
-    const points = [];
-    
-    // Leo: center at (12, 0, -4)
-    const leoCenter = new THREE.Vector3(12, 0, -4);
-    const leoStars = {
-        regulus: new THREE.Vector3(0, -2.5, 0),
-        denebola: new THREE.Vector3(5, 0.5, 0),
-        algieba: new THREE.Vector3(1, 2, 0),
-        zosma: new THREE.Vector3(4, 0.5, 0),
-        chertan: new THREE.Vector3(3.8, -1.5, 0),
-        algenubi: new THREE.Vector3(-1.2, 3, 0),
-        rasalas: new THREE.Vector3(-0.2, 3.8, 0),
-        adhafera: new THREE.Vector3(2, 3.5, 0),
-        subra: new THREE.Vector3(-1.2, -1.8, 0)
-    };
-    // Shift relative stars to center
-    Object.keys(leoStars).forEach(k => leoStars[k].add(leoCenter));
-    
-    const leoConnections = [
-        [leoStars.regulus, leoStars.chertan],
-        [leoStars.chertan, leoStars.zosma],
-        [leoStars.zosma, leoStars.denebola],
-        [leoStars.zosma, leoStars.algieba],
-        [leoStars.algieba, leoStars.adhafera],
-        [leoStars.adhafera, leoStars.rasalas],
-        [leoStars.rasalas, leoStars.algenubi],
-        [leoStars.regulus, leoStars.subra],
-        [leoStars.regulus, leoStars.algieba]
-    ];
-
-    // Aquarius: center at (-12, 0, -4)
-    const aqCenter = new THREE.Vector3(-12, 0, -4);
-    const aqStars = {
-        sadalmelik: new THREE.Vector3(0.5, 1, 0),
-        sadalsuud: new THREE.Vector3(2, 2.5, 0),
-        sadachbia: new THREE.Vector3(-0.8, 0.8, 0),
-        skat: new THREE.Vector3(2, -2.5, 0),
-        albali: new THREE.Vector3(4, 0, 0),
-        ancha: new THREE.Vector3(2.4, -0.8, 0),
-        situla: new THREE.Vector3(-1.2, -1, 0),
-        eta: new THREE.Vector3(-2, 0, 0),
-        phi: new THREE.Vector3(-3.2, -0.8, 0),
-        lambda: new THREE.Vector3(-4, -1.8, 0),
-        a98: new THREE.Vector3(-4.5, -3.5, 0)
-    };
-    Object.keys(aqStars).forEach(k => aqStars[k].add(aqCenter));
-    
-    const aqConnections = [
-        [aqStars.sadalmelik, aqStars.sadachbia],
-        [aqStars.sadachbia, aqStars.situla],
-        [aqStars.situla, aqStars.phi],
-        [aqStars.phi, aqStars.lambda],
-        [aqStars.lambda, aqStars.a98],
-        [aqStars.sadalmelik, aqStars.sadalsuud],
-        [aqStars.sadalsuud, aqStars.albali],
-        [aqStars.sadalsuud, aqStars.ancha],
-        [aqStars.ancha, aqStars.skat],
-        [aqStars.ancha, aqStars.albali]
-    ];
-
-    // Function to interpolate points along connections with low density
-    const interpolate = (p1, p2, density = 10) => {
-        const dist = p1.distanceTo(p2);
-        const steps = Math.max(3, Math.floor(dist * density));
-        for (let s = 0; s <= steps; s++) {
-            const t = s / steps;
-            const pt = new THREE.Vector3().lerpVectors(p1, p2, t);
-            pt.x += (Math.random() - 0.5) * 0.08;
-            pt.y += (Math.random() - 0.5) * 0.08;
-            pt.z += (Math.random() - 0.5) * 0.08;
-            points.push({ pos: pt, type: 3.0 }); // 3.0 = Non-main connection star
+function getStarPool() {
+    if (starPool) return starPool;
+    starPool = new Float32Array(STAR_POOL_SIZE * 3);
+    for (let i = 0; i < STAR_POOL_SIZE; i++) {
+        const x = (Math.random() - 0.5) * 200;
+        const y = (Math.random() - 0.5) * 200;
+        let z = (Math.random() - 0.5) * 200;
+        // Keep stars away from the rose/logo plane
+        if (Math.abs(z) <= 5.0) {
+            z += (Math.sign(z) || 1) * 6.0;
         }
-    };
-
-    // Interpolate connections
-    leoConnections.forEach(([p1, p2]) => interpolate(p1, p2, 10));
-    aqConnections.forEach(([p1, p2]) => interpolate(p1, p2, 10));
-
-    // Also add the main stars as brighter star clusters with 80 particles
-    const addMainStar = (starPos) => {
-        for (let j = 0; j < 80; j++) {
-            const pt = starPos.clone();
-            pt.x += (Math.random() - 0.5) * 0.15;
-            pt.y += (Math.random() - 0.5) * 0.15;
-            pt.z += (Math.random() - 0.5) * 0.15;
-            points.push({ pos: pt, type: 4.0 }); // 4.0 = Main star cluster (steady lit)
-        }
-    };
-    Object.values(leoStars).forEach(addMainStar);
-    Object.values(aqStars).forEach(addMainStar);
-
-    return points;
+        starPool[i * 3] = x;
+        starPool[i * 3 + 1] = y;
+        starPool[i * 3 + 2] = z;
+    }
+    return starPool;
 }
 
-export async function initGPGPU(renderer, scene, imageUrl = 'public/photo.png', options = {}) {
-    return new Promise((resolve) => {
-        const normalizedOptions = typeof options === 'number'
-            ? { ...getParticleSettings(options) }
-            : { ...getParticleSettings(options.density || 1), ...options };
-        const imageStep = normalizedOptions.imageStep || normalizedOptions.stepSize || 1;
-        const logoStep = normalizedOptions.logoStep || 1;
-        const particleBudget = normalizedOptions.minParticles || 200000;
-        const targetImageUrl = normalizedOptions.targetImageUrl || 'public/logo.png';
-
-        // Dispose old resources if rebuilding
-        if (particleMesh) {
-            scene.remove(particleMesh);
-            particleGeometry.dispose();
-            particleMaterial.dispose();
+function disposeCurrent(scene) {
+    if (particleMesh) {
+        scene.remove(particleMesh);
+    }
+    if (particleGeometry) particleGeometry.dispose();
+    if (particleMaterial) particleMaterial.dispose();
+    if (gpuCompute) {
+        for (const variable of [posVariable, velVariable]) {
+            if (!variable) continue;
+            for (const rt of variable.renderTargets || []) {
+                if (rt) rt.dispose();
+            }
+            if (variable.material) variable.material.dispose();
+            if (variable.initialValueTexture) variable.initialValueTexture.dispose();
         }
-        gpuCompute = null;
-        particleMesh = null;
-        particleGeometry = null;
-        particleMaterial = null;
+    }
+    for (const tex of extraTextures) tex.dispose();
+    extraTextures = [];
+    gpuCompute = null;
+    posVariable = null;
+    velVariable = null;
+    positionUniforms = null;
+    velocityUniforms = null;
+    particleMesh = null;
+    particleGeometry = null;
+    particleMaterial = null;
+}
 
-        const processVertices = (vertices, colors, tempBox, targetVertices = null) => {
-            if (vertices.length === 0) {
-                console.error("No valid vertices found!");
-                return resolve({ pointsCount: 0, boundingBox });
-            }
+function loadModelVertices(url) {
+    if (cachedModel && cachedModel.url === url) {
+        return Promise.resolve({
+            vertices: Array.from(cachedModel.vertices),
+            colors: Array.from(cachedModel.colors),
+            box: cachedModel.box.clone()
+        });
+    }
+    return new Promise((res, rej) => {
+        console.log(`[GLTFLoader] Loading 3D model: ${url}`);
+        const loader = new GLTFLoader();
+        loader.load(url, (gltf) => {
+            gltf.scene.updateMatrixWorld(true);
 
-            // Upsample to meet the selected quality budget or enough points to cover the logo target.
-            const requiredParticles = Math.max(particleBudget, targetVertices ? targetVertices.length / 3 : 0);
-            
-            let currentCount = vertices.length / 3;
-            if (currentCount > 0 && currentCount < requiredParticles) {
-                const multiplier = Math.ceil(requiredParticles / currentCount);
-                const origVertices = [...vertices];
-                const origColors = [...colors];
-                for (let m = 1; m < multiplier; m++) {
-                    for (let i = 0; i < currentCount; i++) {
-                        // Add slight jitter
-                        vertices.push(origVertices[i*3] + (Math.random()-0.5)*0.2);
-                        vertices.push(origVertices[i*3+1] + (Math.random()-0.5)*0.2);
-                        vertices.push(origVertices[i*3+2] + (Math.random()-0.5)*0.2);
-                        colors.push(origColors[i*3], origColors[i*3+1], origColors[i*3+2]);
-                    }
-                }
-            }
+            const box = new THREE.Box3().setFromObject(gltf.scene);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const radius = size.length() / 2;
+            const scale = 5.0 / (radius || 1.0);
 
-            boundingBox.copy(tempBox);
-            
-            const constellationPoints = getConstellationPoints();
-            // Calculate a safe minTotalParticles to include all rose vertices + constellation points + 2000 drifting stars
-            const minTotalParticles = (vertices.length / 3) + constellationPoints.length + 2000;
-            TEXTURE_WIDTH = Math.ceil(Math.sqrt(minTotalParticles));
-            pointsCount = TEXTURE_WIDTH * TEXTURE_WIDTH;
+            const vertices = [];
+            const colors = [];
+            const tempBox = new THREE.Box3();
+            tempBox.makeEmpty();
+            const v = new THREE.Vector3();
 
-            // 1. Setup GPGPU
-            gpuCompute = new GPUComputationRenderer(TEXTURE_WIDTH, TEXTURE_WIDTH, renderer);
-            
-            const dtPosition = gpuCompute.createTexture();
-            const dtVelocity = gpuCompute.createTexture();
-            const dtBasePos = gpuCompute.createTexture(); 
-            const dtTargetPos = gpuCompute.createTexture(); // New!
-            
-            const posArr = dtPosition.image.data;
-            const velArr = dtVelocity.image.data;
-            const baseArr = dtBasePos.image.data;
-            const targetArr = dtTargetPos.image.data;
+            gltf.scene.traverse((child) => {
+                if (child.isMesh && child.geometry) {
+                    const posAttr = child.geometry.getAttribute('position');
+                    const colorAttr = child.geometry.getAttribute('color');
+                    const mat = child.matrixWorld;
 
-            for (let i = 0; i < pointsCount; i++) {
-                let x = 0, y = 0, z = 0;
-                let type = 1.0; // 1.0 = Rose, 2.0 = Drifting Star, 3.0 = Connection Star, 4.0 = Main Constellation Star
-                
-                if (i * 3 < vertices.length) {
-                    x = vertices[i*3];
-                    y = vertices[i*3+1];
-                    z = vertices[i*3+2];
-                    type = 1.0;
-                } else {
-                    const padIdx = i - (vertices.length / 3);
-                    if (padIdx < constellationPoints.length) {
-                        const cp = constellationPoints[padIdx];
-                        x = cp.pos.x;
-                        y = cp.pos.y;
-                        z = cp.pos.z;
-                        type = cp.type;
-                    } else {
-                        // Background drifting star
-                        x = (Math.random() - 0.5) * 200;
-                        y = (Math.random() - 0.5) * 200;
-                        z = (Math.random() - 0.5) * 200;
-                        if (Math.abs(z) <= 5.0) {
-                            z += (Math.sign(z) || 1) * 6.0;
-                        }
-                        type = 2.0;
-                    }
-                }
-                
-                posArr[i*4 + 0] = x;
-                posArr[i*4 + 1] = y;
-                posArr[i*4 + 2] = z;
-                posArr[i*4 + 3] = type;
-                
-                baseArr[i*4 + 0] = x;
-                baseArr[i*4 + 1] = y;
-                baseArr[i*4 + 2] = z;
-                baseArr[i*4 + 3] = type;
+                    if (!posAttr) return;
+                    for (let i = 0; i < posAttr.count; i++) {
+                        v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+                        // The GLTF scene graph already contains the Z-up -> Y-up matrix,
+                        // so applyMatrix4 leaves the model upright (stem along Y)
+                        v.applyMatrix4(mat);
+                        v.sub(center);
+                        v.multiplyScalar(scale);
 
-                velArr[i*4 + 0] = 0;
-                velArr[i*4 + 1] = 0;
-                velArr[i*4 + 2] = 0;
-                velArr[i*4 + 3] = type;
-
-                if (targetVertices && targetVertices.length > 0) {
-                    let tIdx = i % (targetVertices.length / 3);
-                    targetArr[i*4 + 0] = targetVertices[tIdx*3] + (Math.random()-0.5) * 0.015;
-                    targetArr[i*4 + 1] = targetVertices[tIdx*3 + 1] + (Math.random()-0.5) * 0.015;
-                    targetArr[i*4 + 2] = targetVertices[tIdx*3 + 2] + (Math.random()-0.5) * 0.05;
-                    targetArr[i*4 + 3] = type;
-                } else {
-                    targetArr[i*4 + 0] = baseArr[i*4 + 0];
-                    targetArr[i*4 + 1] = baseArr[i*4 + 1];
-                    targetArr[i*4 + 2] = baseArr[i*4 + 2];
-                    targetArr[i*4 + 3] = type;
-                }
-            }
-            
-            // Explicitly mark textures for update
-            dtPosition.needsUpdate = true;
-            dtVelocity.needsUpdate = true;
-            dtBasePos.needsUpdate = true;
-            dtTargetPos.needsUpdate = true;
-
-            velVariable = gpuCompute.addVariable("textureVelocity", velocityShader, dtVelocity);
-            posVariable = gpuCompute.addVariable("texturePosition", positionShader, dtPosition);
-            
-            gpuCompute.setVariableDependencies(velVariable, [posVariable, velVariable]);
-            gpuCompute.setVariableDependencies(posVariable, [posVariable, velVariable]);
-            
-            velocityUniforms = velVariable.material.uniforms;
-            velocityUniforms.uTime = { value: 0.0 };
-            velocityUniforms.uProgress = { value: 0.0 };
-            velocityUniforms.uAudioPulse = { value: 0.0 };
-            velocityUniforms.uIntensity = { value: 1.0 };
-            velocityUniforms.uTurbulence = { value: 1.0 };
-            velocityUniforms.uReturnForce = { value: 1.0 };
-            velocityUniforms.uMode = { value: 0 };
-            velocityUniforms.textureBasePosition = { value: dtBasePos };
-            velocityUniforms.textureTargetPosition = { value: dtTargetPos };
-
-            positionUniforms = posVariable.material.uniforms;
-            positionUniforms.uTime = { value: 0.0 };
-            positionUniforms.uMode = { value: 0 };
-            positionUniforms.uProgress = { value: 0.0 };
-            positionUniforms.textureBasePosition = { value: dtBasePos };
-            positionUniforms.textureTargetPosition = { value: dtTargetPos };
-
-            const error = gpuCompute.init();
-            if (error !== null) {
-                console.error(error);
-            }
-
-            // 2. Setup Particle Rendering
-            particleGeometry = new THREE.BufferGeometry();
-            const uvCoords = new Float32Array(pointsCount * 2);
-            const finalColors = new Float32Array(pointsCount * 3);
-            
-            for (let i = 0; i < pointsCount; i++) {
-                let p = i % (vertices.length/3);
-                finalColors[i*3] = colors[p*3] || 1.0;
-                finalColors[i*3+1] = colors[p*3+1] || 1.0;
-                finalColors[i*3+2] = colors[p*3+2] || 1.0;
-                
-                uvCoords[i*2] = (i % TEXTURE_WIDTH) / TEXTURE_WIDTH;
-                uvCoords[i*2+1] = Math.floor(i / TEXTURE_WIDTH) / TEXTURE_WIDTH;
-            }
-
-            particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pointsCount * 3), 3));
-            particleGeometry.setAttribute('uv', new THREE.BufferAttribute(uvCoords, 2));
-            particleGeometry.setAttribute('color', new THREE.BufferAttribute(finalColors, 3));
-
-            particleMaterial = new THREE.ShaderMaterial({
-                uniforms: {
-                    texturePosition: { value: null },
-                    pointSize: { value: 0.8 },
-                    uGlobalScale: { value: 0.6 },
-                    uRenderMode: { value: 0 },
-                    uRotationAngle: { value: 0.0 },
-                    uProgress: { value: 0.0 },
-                    uTime: { value: 0.0 }
-                },
-                vertexColors: true,
-                vertexShader: `
-                    uniform sampler2D texturePosition;
-                    uniform float pointSize;
-                    uniform float uGlobalScale;
-                    uniform int uRenderMode;
-                    uniform float uRotationAngle;
-                    uniform float uProgress;
-                    // uv and color are automatically injected by Three.js ShaderMaterial
-                    varying vec3 vColor;
-                    varying float vType;
-                    varying vec2 vUv;
-                    void main() {
-                        vec4 pos = texture2D(texturePosition, uv);
-                        vec3 rotatedPos = pos.xyz;
-                        float pType = pos.w;
-                        vType = pType;
-                        vUv = uv;
-                        
-                        // Y-axis rotation (spindle rotation along stem), fades out as uProgress reaches 1.0
-                        float angle = uRotationAngle * (1.0 - uProgress);
-                        if (pType < 1.5) {
-                            float cosA = cos(angle);
-                            float sinA = sin(angle);
-                            float rx = rotatedPos.x * cosA - rotatedPos.z * sinA;
-                            float rz = rotatedPos.x * sinA + rotatedPos.z * cosA;
-                            rotatedPos.x = rx;
-                            rotatedPos.z = rz;
-                        }
-                        
-                        vec4 scaledPos = vec4(rotatedPos * uGlobalScale, 1.0);
-                        vec4 mvPosition = modelViewMatrix * scaledPos;
-                        gl_PointSize = pointSize * (20.0 / -mvPosition.z);
-                        gl_Position = projectionMatrix * mvPosition;
-                        vColor = color;
-                    }
-                `,
-                fragmentShader: `
-                    uniform float uTime;
-                    uniform float uProgress;
-                    varying vec3 vColor;
-                    varying float vType;
-                    varying vec2 vUv;
-
-                    float hash(float n) {
-                        return fract(sin(n) * 43758.5453123);
-                    }
-
-                    void main() {
-                        vec2 xy = gl_PointCoord.xy - vec2(0.5);
-                        float ll = length(xy);
-                        if(ll > 0.5) discard;
-                        
-                        // Base alpha from point shape
-                        float alpha = smoothstep(0.5, 0.1, ll) * 0.5;
-                        
-                        if (vType > 1.5) {
-                            // Star particle
-                            float seed = hash(vUv.x * 12.9898 + vUv.y * 78.233);
-                            
-                            if (vType > 3.5) {
-                                // Main star cluster (type 4.0) - steady lit (constant)
-                                float twinkle = 0.95 + 0.05 * sin(uTime * 12.0 + seed * 6.28); // subtle realistic scintillation
-                                alpha *= twinkle;
-                            } else if (vType > 2.5) {
-                                // Connection Star (type 3.0) - alternating/staggered twinkle in turn
-                                float speed = 1.5 + seed * 2.5;
-                                float phase = seed * 6.28;
-                                float twinkle = 0.15 + 0.85 * pow(0.5 + 0.5 * sin(uTime * speed + phase), 3.0);
-                                
-                                float twinkleBlend = mix(twinkle, 1.0, uProgress);
-                                alpha *= twinkleBlend;
-                            } else {
-                                // Background drifting star (type 2.0) - gentle twinkle & fade out
-                                float speed = 1.0 + seed * 2.0;
-                                float phase = seed * 6.28;
-                                float twinkle = 0.3 + 0.7 * sin(uTime * speed + phase);
-                                alpha *= twinkle * (1.0 - uProgress);
-                            }
+                        vertices.push(v.x, v.y, v.z);
+                        if (colorAttr) {
+                            colors.push(colorAttr.getX(i), colorAttr.getY(i), colorAttr.getZ(i));
                         } else {
-                            // Rose/LOGO particle (type 1.0)
-                            alpha *= 0.6;
+                            // Dim white keeps petal detail under additive blending + bloom
+                            colors.push(0.3, 0.3, 0.3);
                         }
-                        
-                        gl_FragColor = vec4(vColor, alpha);
-                    }
-                `,
-                transparent: true,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false
-            });
-
-            particleMesh = new THREE.Points(particleGeometry, particleMaterial);
-            scene.add(particleMesh);
-
-            console.log(`[GPGPU] Rebuild complete. Particles count: ${pointsCount}.`);
-            resolve({ pointsCount, boundingBox });
-        };
-
-        const loadLogo = () => {
-            return new Promise(res => {
-                const img = new Image();
-                img.src = targetImageUrl;
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let fw = img.width, fh = img.height;
-                    const maxRes = 2000;
-                    if (fw > maxRes || fh > maxRes) {
-                        const r = Math.min(maxRes/fw, maxRes/fh);
-                        fw = Math.floor(fw*r); fh = Math.floor(fh*r);
-                    }
-                    canvas.width = fw; canvas.height = fh;
-                    const ctx = canvas.getContext('2d', {willReadFrequently:true});
-                    ctx.drawImage(img, 0, 0, fw, fh);
-                    const imgData = ctx.getImageData(0,0,fw,fh).data;
-                    const targetV = [];
-                    for (let y = 0; y < fh; y += logoStep) {
-                        for (let x = 0; x < fw; x += logoStep) {
-                            const i = (y * fw + x) * 4;
-                            const brightness = imgData[i] + imgData[i+1] + imgData[i+2];
-                            // Exclude fully transparent AND pure black pixels
-                            if (imgData[i+3] > 25 && brightness > 30) { 
-                                // Scale and center for Logo 
-                                const px = (x - fw/2) * 0.013; 
-                                const py = -(y - fh/2) * 0.013;
-                                const pz = 0.0; // Logo is flat
-                                targetV.push(px, py, pz);
-                            }
-                        }
-                    }
-                    res(targetV);
-                };
-                img.onerror = () => res(null);
-            });
-        };
-
-        if (imageUrl.toLowerCase().endsWith('.gltf') || imageUrl.toLowerCase().endsWith('.glb')) {
-            console.log(`[GLTFLoader] Loading 3D model: ${imageUrl}`);
-            const loader = new GLTFLoader();
-            loader.load(imageUrl, (gltf) => {
-                console.log(`[GLTFLoader] Loaded successfully: ${imageUrl}`);
-                gltf.scene.updateMatrixWorld(true);
-                
-                const box = new THREE.Box3().setFromObject(gltf.scene);
-                const center = box.getCenter(new THREE.Vector3());
-                const size = box.getSize(new THREE.Vector3());
-                const radius = size.length() / 2;
-                const scale = 5.0 / (radius || 1.0);
-
-                const vertices = [];
-                const colors = [];
-                const tempBox = new THREE.Box3();
-                tempBox.min.set(1e5, 1e5, 1e5);
-                tempBox.max.set(-1e5, -1e5, -1e5);
-
-                gltf.scene.traverse((child) => {
-                    if (child.isMesh && child.geometry) {
-                        const posAttr = child.geometry.getAttribute('position');
-                        const colorAttr = child.geometry.getAttribute('color');
-                        const mat = child.matrixWorld;
-                        
-                        if (posAttr) {
-                            for (let i = 0; i < posAttr.count; i++) {
-                                const v = new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-                                v.applyMatrix4(mat);
-                                v.sub(center);
-                                v.multiplyScalar(scale);
-
-                                let vx = v.x;
-                                let vy = v.y;
-                                let vz = v.z;
-                                
-                                // No manual rotation needed: the GLTF scene graph's
-                                // Sketchfab_model root node already contains a Z-up → Y-up
-                                // rotation matrix. applyMatrix4(mat) above has already
-                                // applied it, so the model is already upright (stem along Y).
-
-                                vertices.push(vx, vy, vz);
-                                
-                                if (colorAttr) {
-                                    colors.push(colorAttr.getX(i), colorAttr.getY(i), colorAttr.getZ(i));
-                                } else {
-                                    // Rose particles remain white but dim to preserve detail in Additive Blending
-                                    colors.push(0.3, 0.3, 0.3);
-                                }
-                                
-                                tempBox.min.x = Math.min(tempBox.min.x, vx);
-                                tempBox.min.y = Math.min(tempBox.min.y, vy);
-                                tempBox.min.z = Math.min(tempBox.min.z, vz);
-                                tempBox.max.x = Math.max(tempBox.max.x, vx);
-                                tempBox.max.y = Math.max(tempBox.max.y, vy);
-                                tempBox.max.z = Math.max(tempBox.max.z, vz);
-                            }
-                        }
-                    }
-                });
-
-                if (vertices.length > 0) {
-                    console.log(`[GLTFLoader] Extracted ${vertices.length / 3} vertices from ${imageUrl}`);
-                    const extX = (tempBox.max.x - tempBox.min.x).toFixed(3);
-                    const extY = (tempBox.max.y - tempBox.min.y).toFixed(3);
-                    const extZ = (tempBox.max.z - tempBox.min.z).toFixed(3);
-                    console.log(`[GLTFLoader] BBox extents — X: ${extX}, Y: ${extY}, Z: ${extZ} (Y should be largest for upright rose)`);
-                    loadLogo().then(targetVertices => {
-                        processVertices(vertices, colors, tempBox, targetVertices);
-                    });
-                } else {
-                    console.error(`[GLTFLoader] No mesh vertices found in GLTF: ${imageUrl}`);
-                    resolve({ pointsCount: 0, boundingBox });
-                }
-            }, undefined, (error) => {
-                console.error(`[GLTFLoader] Error loading GLTF from ${imageUrl}:`, error);
-                resolve({ pointsCount: 0, boundingBox });
-            });
-        } else {
-            const img = new Image();
-            img.src = imageUrl;
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const maxRes = 2000; 
-                let w = img.width;
-                let h = img.height;
-                if (w > maxRes || h > maxRes) {
-                    const ratio = Math.min(maxRes / w, maxRes / h);
-                    w = Math.floor(w * ratio);
-                    h = Math.floor(h * ratio);
-                }
-                canvas.width = w;
-                canvas.height = h;
-                const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                ctx.drawImage(img, 0, 0, w, h);
-                
-                const imgData = ctx.getImageData(0, 0, w, h).data;
-                
-                const vertices = [];
-                const colors = [];
-                
-                for (let y = 0; y < h; y += imageStep) { 
-                    for (let x = 0; x < w; x += imageStep) {
-                        const i = (y * w + x) * 4;
-                        const r = imgData[i] / 255.0;
-                        const g = imgData[i+1] / 255.0;
-                        const b = imgData[i+2] / 255.0;
-                        const a = imgData[i+3] / 255.0;
-                        
-                        // Exclude fully transparent AND pure black pixels
-                        if (a > 0.1 && (r + g + b) > 0.1) {
-                            const px = (x - w/2) * 0.22; 
-                            const py = -(y - h/2) * 0.22;
-                            const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                            const pz = brightness * 5.0 - 2.5; 
-                            
-                            vertices.push(px, py, pz);
-                            colors.push(r, g, b);
-                        }
+                        tempBox.expandByPoint(v);
                     }
                 }
-                
-                const tempBox = new THREE.Box3();
-                tempBox.min.set(-w/2 * 0.22, -h/2 * 0.22, -2.5);
-                tempBox.max.set(w/2 * 0.22, h/2 * 0.22, 2.5);
-                loadLogo().then(targetVertices => {
-                    processVertices(vertices, colors, tempBox, targetVertices);
-                });
+            });
+
+            if (vertices.length === 0) {
+                rej(new Error(`No mesh vertices found in GLTF: ${url}`));
+                return;
+            }
+
+            console.log(`[GLTFLoader] Extracted ${vertices.length / 3} vertices from ${url}`);
+            cachedModel = {
+                url,
+                vertices: Array.from(vertices),
+                colors: Array.from(colors),
+                box: tempBox.clone()
             };
-            img.onerror = (e) => {
-                console.error("Failed to load image", e);
-                resolve({ pointsCount: 0, boundingBox });
-            };
-        }
+            res({ vertices, colors, box: tempBox });
+        }, undefined, (error) => rej(error));
     });
 }
 
-export function updateGPGPU(time, appState, audioPulse = 0.0) {
-    if (!gpuCompute || !particleMesh || !particleMaterial) return;
+function loadLogoImage(url) {
+    if (cachedLogo && cachedLogo.url === url) {
+        return Promise.resolve(cachedLogo);
+    }
+    return new Promise((res) => {
+        const img = new Image();
+        img.src = url;
+        img.onload = () => {
+            let fw = img.width;
+            let fh = img.height;
+            const maxRes = 2000;
+            if (fw > maxRes || fh > maxRes) {
+                const r = Math.min(maxRes / fw, maxRes / fh);
+                fw = Math.floor(fw * r);
+                fh = Math.floor(fh * r);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = fw;
+            canvas.height = fh;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, fw, fh);
+            cachedLogo = { url, imgData: ctx.getImageData(0, 0, fw, fh).data, width: fw, height: fh };
+            res(cachedLogo);
+        };
+        img.onerror = () => {
+            console.error(`[GPGPU] Failed to load logo image: ${url}`);
+            res(null);
+        };
+    });
+}
+
+function extractLogoVertices(logo, logoStep) {
+    if (!logo) return null;
+    const { imgData, width, height } = logo;
+    const targetV = [];
+    for (let y = 0; y < height; y += logoStep) {
+        for (let x = 0; x < width; x += logoStep) {
+            const i = (y * width + x) * 4;
+            const brightness = imgData[i] + imgData[i + 1] + imgData[i + 2];
+            // Exclude fully transparent AND pure black pixels
+            if (imgData[i + 3] > 25 && brightness > 30) {
+                targetV.push((x - width / 2) * 0.013, -(y - height / 2) * 0.013, 0.0);
+            }
+        }
+    }
+    return targetV;
+}
+
+function installParticles(renderer, scene, model, targetVertices, particleBudget) {
+    const vertices = model.vertices;
+    const colors = model.colors;
+
+    // Jitter upsampling: 補足粒子數以覆蓋畫質預算與 LOGO 目標點數
+    const requiredParticles = Math.max(particleBudget, targetVertices ? targetVertices.length / 3 : 0);
+    const baseCount = vertices.length / 3;
+    if (baseCount > 0 && baseCount < requiredParticles) {
+        const multiplier = Math.ceil(requiredParticles / baseCount);
+        const origVertices = vertices.slice();
+        const origColors = colors.slice();
+        for (let m = 1; m < multiplier; m++) {
+            for (let i = 0; i < baseCount; i++) {
+                vertices.push(
+                    origVertices[i * 3] + (Math.random() - 0.5) * 0.2,
+                    origVertices[i * 3 + 1] + (Math.random() - 0.5) * 0.2,
+                    origVertices[i * 3 + 2] + (Math.random() - 0.5) * 0.2
+                );
+                colors.push(origColors[i * 3], origColors[i * 3 + 1], origColors[i * 3 + 2]);
+            }
+        }
+    }
+
+    const roseCount = vertices.length / 3;
+    const minTotalParticles = roseCount + 2000; // 玫瑰粒子 + 背景漂浮星
+    const textureWidth = Math.ceil(Math.sqrt(minTotalParticles));
+    const totalCount = textureWidth * textureWidth;
+
+    // 1. Setup GPGPU (built aside; the old simulation keeps rendering until swap)
+    const newCompute = new GPUComputationRenderer(textureWidth, textureWidth, renderer);
+
+    const dtPosition = newCompute.createTexture();
+    const dtVelocity = newCompute.createTexture();
+    const dtBasePos = newCompute.createTexture();
+    const dtTargetPos = newCompute.createTexture();
+
+    const posArr = dtPosition.image.data;
+    const velArr = dtVelocity.image.data;
+    const baseArr = dtBasePos.image.data;
+    const targetArr = dtTargetPos.image.data;
+    const pool = getStarPool();
+    const targetCount = targetVertices ? targetVertices.length / 3 : 0;
+
+    for (let i = 0; i < totalCount; i++) {
+        let x, y, z, type;
+        if (i < roseCount) {
+            x = vertices[i * 3];
+            y = vertices[i * 3 + 1];
+            z = vertices[i * 3 + 2];
+            type = 1.0; // Rose/LOGO particle
+        } else {
+            const s = ((i - roseCount) % STAR_POOL_SIZE) * 3;
+            x = pool[s];
+            y = pool[s + 1];
+            z = pool[s + 2];
+            type = 2.0; // Background drifting star
+        }
+
+        posArr[i * 4] = x;
+        posArr[i * 4 + 1] = y;
+        posArr[i * 4 + 2] = z;
+        posArr[i * 4 + 3] = type;
+
+        baseArr[i * 4] = x;
+        baseArr[i * 4 + 1] = y;
+        baseArr[i * 4 + 2] = z;
+        baseArr[i * 4 + 3] = type;
+
+        velArr[i * 4] = 0;
+        velArr[i * 4 + 1] = 0;
+        velArr[i * 4 + 2] = 0;
+        velArr[i * 4 + 3] = type;
+
+        if (targetCount > 0) {
+            const tIdx = i % targetCount;
+            targetArr[i * 4] = targetVertices[tIdx * 3] + (Math.random() - 0.5) * 0.015;
+            targetArr[i * 4 + 1] = targetVertices[tIdx * 3 + 1] + (Math.random() - 0.5) * 0.015;
+            targetArr[i * 4 + 2] = targetVertices[tIdx * 3 + 2] + (Math.random() - 0.5) * 0.05;
+            targetArr[i * 4 + 3] = type;
+        } else {
+            targetArr[i * 4] = x;
+            targetArr[i * 4 + 1] = y;
+            targetArr[i * 4 + 2] = z;
+            targetArr[i * 4 + 3] = type;
+        }
+    }
+
+    dtPosition.needsUpdate = true;
+    dtVelocity.needsUpdate = true;
+    dtBasePos.needsUpdate = true;
+    dtTargetPos.needsUpdate = true;
+
+    const newVelVar = newCompute.addVariable('textureVelocity', velocityShader, dtVelocity);
+    const newPosVar = newCompute.addVariable('texturePosition', positionShader, dtPosition);
+
+    newCompute.setVariableDependencies(newVelVar, [newPosVar, newVelVar]);
+    newCompute.setVariableDependencies(newPosVar, [newPosVar, newVelVar]);
+
+    newVelVar.material.uniforms.uTime = { value: 0.0 };
+    newVelVar.material.uniforms.uProgress = { value: 0.0 };
+    newVelVar.material.uniforms.uIntensity = { value: 0.0 };
+    newVelVar.material.uniforms.uTurbulence = { value: 0.0 };
+    newVelVar.material.uniforms.uReturnForce = { value: 1.0 };
+    newVelVar.material.uniforms.textureBasePosition = { value: dtBasePos };
+    newVelVar.material.uniforms.textureTargetPosition = { value: dtTargetPos };
+
+    newPosVar.material.uniforms.textureBasePosition = { value: dtBasePos };
+
+    const error = newCompute.init();
+    if (error !== null) {
+        console.error('[GPGPU] Compute init failed, keeping previous scene:', error);
+        for (const variable of [newPosVar, newVelVar]) {
+            for (const rt of variable.renderTargets || []) {
+                if (rt) rt.dispose();
+            }
+            if (variable.material) variable.material.dispose();
+        }
+        dtPosition.dispose();
+        dtVelocity.dispose();
+        dtBasePos.dispose();
+        dtTargetPos.dispose();
+        return { pointsCount, boundingBox, failed: true };
+    }
+
+    // 2. Setup Particle Rendering
+    const newGeometry = new THREE.BufferGeometry();
+    const uvCoords = new Float32Array(totalCount * 2);
+    const finalColors = new Float32Array(totalCount * 3);
+
+    for (let i = 0; i < totalCount; i++) {
+        const p = i % roseCount;
+        finalColors[i * 3] = colors[p * 3] || 1.0;
+        finalColors[i * 3 + 1] = colors[p * 3 + 1] || 1.0;
+        finalColors[i * 3 + 2] = colors[p * 3 + 2] || 1.0;
+
+        uvCoords[i * 2] = (i % textureWidth) / textureWidth;
+        uvCoords[i * 2 + 1] = Math.floor(i / textureWidth) / textureWidth;
+    }
+
+    newGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(totalCount * 3), 3));
+    newGeometry.setAttribute('uv', new THREE.BufferAttribute(uvCoords, 2));
+    newGeometry.setAttribute('color', new THREE.BufferAttribute(finalColors, 3));
+
+    const newMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            texturePosition: { value: null },
+            pointSize: { value: 0.8 },
+            uGlobalScale: { value: 0.6 },
+            uRotationAngle: { value: 0.0 },
+            uProgress: { value: 0.0 },
+            uTime: { value: 0.0 }
+        },
+        vertexColors: true,
+        vertexShader: `
+            uniform sampler2D texturePosition;
+            uniform float pointSize;
+            uniform float uGlobalScale;
+            uniform float uRotationAngle;
+            // uv and color are automatically injected by Three.js ShaderMaterial
+            varying vec3 vColor;
+            varying float vType;
+            varying vec2 vUv;
+            void main() {
+                vec4 pos = texture2D(texturePosition, uv);
+                vec3 rotatedPos = pos.xyz;
+                float pType = pos.w;
+                vType = pType;
+                vUv = uv;
+
+                // 玫瑰自轉: 角度由 CPU 累積,轉場時由 GSAP 收斂至 0,LOGO 恆為正向
+                if (pType < 1.5) {
+                    float cosA = cos(uRotationAngle);
+                    float sinA = sin(uRotationAngle);
+                    float rx = rotatedPos.x * cosA - rotatedPos.z * sinA;
+                    float rz = rotatedPos.x * sinA + rotatedPos.z * cosA;
+                    rotatedPos.x = rx;
+                    rotatedPos.z = rz;
+                }
+
+                vec4 mvPosition = modelViewMatrix * vec4(rotatedPos * uGlobalScale, 1.0);
+                gl_PointSize = pointSize * (20.0 / -mvPosition.z);
+                gl_Position = projectionMatrix * mvPosition;
+                vColor = color;
+            }
+        `,
+        fragmentShader: `
+            uniform float uTime;
+            uniform float uProgress;
+            varying vec3 vColor;
+            varying float vType;
+            varying vec2 vUv;
+
+            float hash(float n) {
+                return fract(sin(n) * 43758.5453123);
+            }
+
+            void main() {
+                vec2 xy = gl_PointCoord.xy - vec2(0.5);
+                float ll = length(xy);
+                if (ll > 0.5) discard;
+
+                float alpha = smoothstep(0.5, 0.1, ll) * 0.5;
+
+                if (vType > 1.5) {
+                    // Background drifting star: gentle twinkle, fades out while LOGO shows
+                    float seed = hash(vUv.x * 12.9898 + vUv.y * 78.233);
+                    float speed = 1.0 + seed * 2.0;
+                    float phase = seed * 6.28;
+                    float twinkle = 0.3 + 0.7 * sin(uTime * speed + phase);
+                    alpha *= twinkle * (1.0 - uProgress);
+                } else {
+                    // Rose/LOGO particle
+                    alpha *= 0.6;
+                }
+
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+
+    const newMesh = new THREE.Points(newGeometry, newMaterial);
+    // Positions live in the GPGPU texture, so the CPU-side bounding sphere is
+    // meaningless — never let Three.js frustum-cull the particle cloud
+    newMesh.frustumCulled = false;
+
+    // 3. Atomic swap: 新資源全部就緒後才移除舊粒子,重建過程畫面不中斷
+    disposeCurrent(scene);
+    gpuCompute = newCompute;
+    posVariable = newPosVar;
+    velVariable = newVelVar;
+    velocityUniforms = newVelVar.material.uniforms;
+    positionUniforms = newPosVar.material.uniforms;
+    particleGeometry = newGeometry;
+    particleMaterial = newMaterial;
+    particleMesh = newMesh;
+    extraTextures = [dtBasePos, dtTargetPos];
+    TEXTURE_WIDTH = textureWidth;
+    pointsCount = totalCount;
+    boundingBox.copy(model.box);
+    scene.add(particleMesh);
+
+    console.log(`[GPGPU] Rebuild complete. Particles: ${totalCount}`);
+    return { pointsCount: totalCount, boundingBox };
+}
+
+export async function initGPGPU(renderer, scene, imageUrl, options = {}) {
+    const buildId = ++buildCounter;
+    const normalizedOptions = typeof options === 'number'
+        ? { ...getParticleSettings(options) }
+        : { ...getParticleSettings(options.density || 1), ...options };
+    const logoStep = normalizedOptions.logoStep || 1;
+    const particleBudget = normalizedOptions.minParticles || 200000;
+    const targetImageUrl = normalizedOptions.targetImageUrl || 'public/logo.png';
+
+    try {
+        const [model, logo] = await Promise.all([
+            loadModelVertices(imageUrl),
+            loadLogoImage(targetImageUrl)
+        ]);
+        // A newer rebuild superseded this one while assets were loading — drop it
+        if (buildId !== buildCounter) {
+            return { pointsCount, boundingBox, stale: true };
+        }
+        const targetVertices = extractLogoVertices(logo, logoStep);
+        return installParticles(renderer, scene, model, targetVertices, particleBudget);
+    } catch (err) {
+        console.error('[GPGPU] Build failed, keeping previous scene:', err);
+        return { pointsCount, boundingBox, failed: true };
+    }
+}
+
+export function updateGPGPU(time, appState) {
+    if (!gpuCompute || !particleMaterial) return;
 
     velocityUniforms.uTime.value = time;
     velocityUniforms.uProgress.value = appState.uProgress;
-    velocityUniforms.uAudioPulse.value = audioPulse;
-    velocityUniforms.uIntensity.value = appState.fieldIntensity ?? 1.0;
-    velocityUniforms.uTurbulence.value = appState.turbulence ?? 1.0;
+    velocityUniforms.uIntensity.value = appState.fieldIntensity ?? 0.0;
+    velocityUniforms.uTurbulence.value = appState.turbulence ?? 0.0;
     velocityUniforms.uReturnForce.value = appState.returnForce ?? 1.0;
-    velocityUniforms.uMode.value = appState.vectorFieldMode;
-    
-    if (particleMaterial) {
-        particleMaterial.uniforms.uGlobalScale.value = appState.logoScale;
-        particleMaterial.uniforms.pointSize.value = appState.pointSize ?? 0.8;
-        particleMaterial.uniforms.uRenderMode.value = appState.vectorFieldMode ?? 0;
-        particleMaterial.uniforms.uRotationAngle.value = time * 0.15; // Slow self-rotation speed
-        particleMaterial.uniforms.uProgress.value = appState.uProgress;
-        particleMaterial.uniforms.uTime.value = time;
-    }
 
-    positionUniforms.uTime.value = time;
-    positionUniforms.uProgress.value = appState.uProgress;
-    positionUniforms.uMode.value = appState.vectorFieldMode;
+    const m = particleMaterial.uniforms;
+    m.uGlobalScale.value = appState.logoScale;
+    m.pointSize.value = appState.pointSize ?? 0.8;
+    m.uRotationAngle.value = appState.rotationAngle ?? 0.0;
+    m.uProgress.value = appState.uProgress;
+    m.uTime.value = time;
 
     gpuCompute.compute();
-    particleMaterial.uniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget(posVariable).texture;
+    m.texturePosition.value = gpuCompute.getCurrentRenderTarget(posVariable).texture;
 }

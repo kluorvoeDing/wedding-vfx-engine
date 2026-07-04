@@ -5,30 +5,25 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260621_wedding_v4';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260621_wedding_v4';
-import { initIO, updateIO, AppState, getCurrentImageUrl } from './io.js?v=20260621_wedding_v4';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260704_wedding_v5';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260704_wedding_v5';
+import { initIO, updateIO, AppState, getCurrentImageUrl, getInitialBuildOptions, markSceneReady } from './io.js?v=20260704_wedding_v5';
 
 let scene, renderer, composer, camera;
 let boundingBox;
 let lastTime = 0;
-let frames = 0;
-let fpsTimer = 0;
 let rebuildVersion = 0;
-
-const fpsCounter = document.getElementById('fps-counter');
-const particleCounter = document.getElementById('particle-count');
 
 async function init() {
     // 1. Scene Setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    // Remove default OrbitControls per instructions, handled by camera.js
-    
+
     camera = initCamera(scene);
 
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    // Cap pixel ratio: bloom + afterimage fill-rate explodes on >2x displays
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
@@ -36,7 +31,7 @@ async function init() {
 
     // 2. Post-Processing Pipeline
     composer = new EffectComposer(renderer);
-    
+
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
@@ -52,14 +47,13 @@ async function init() {
     bloomPass.radius = 0.8;
     composer.addPass(bloomPass);
 
-    // 3. I/O & MediaPipe Setup
+    // 3. I/O Setup (keyboard state machine)
     await initIO({ triggerRebuild });
 
-    // 4. GPGPU Data Pipeline Setup
-    // Initialize GPGPU which parses GLTF and sets up textures
-    const gpuData = await initGPGPU(renderer, scene, getCurrentImageUrl());
-    particleCounter.innerText = `PARTICLES: ${gpuData.pointsCount.toLocaleString()}`;
+    // 4. GPGPU Data Pipeline Setup (initial build = locked Rose parameters)
+    const gpuData = await initGPGPU(renderer, scene, getCurrentImageUrl(), getInitialBuildOptions());
     boundingBox = gpuData.boundingBox;
+    markSceneReady(gpuData);
 
     // Window resize
     window.addEventListener('resize', onWindowResize);
@@ -78,18 +72,11 @@ function animate(time) {
     requestAnimationFrame(animate);
 
     const timeSec = time * 0.001;
-    const deltaTime = timeSec - lastTime;
+    // Clamp dt: rAF pauses (tab switch / display sleep) otherwise produce a huge step
+    const deltaTime = Math.min(timeSec - lastTime, 0.05);
     lastTime = timeSec;
 
-    // Calculate FPS
-    frames++;
-    if (time - fpsTimer > 1000) {
-        fpsCounter.innerText = `FPS: ${frames}`;
-        frames = 0;
-        fpsTimer = time;
-    }
-
-    // 1. Update I/O (Smooth Progress)
+    // 1. Update I/O (Smooth Progress + Rotation)
     updateIO(deltaTime);
 
     // 2. Update Camera (GSAP + Frustum Fitting)
@@ -105,9 +92,9 @@ function animate(time) {
 export async function triggerRebuild(imageUrl, options) {
     const version = ++rebuildVersion;
     const gpuData = await initGPGPU(renderer, scene, imageUrl, options);
-    if (version !== rebuildVersion) return;
-    particleCounter.innerText = `PARTICLES: ${gpuData.pointsCount.toLocaleString()}`;
+    if (version !== rebuildVersion) return null;
     boundingBox = gpuData.boundingBox;
+    return gpuData;
 }
 
 // Kick off

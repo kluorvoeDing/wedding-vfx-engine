@@ -1,45 +1,136 @@
-// io.js - I/O & VJ Performance (狀態機與現場交互 - 婚禮特製簡化版)
-import { getModeConfig } from './modes.js?v=20260621_wedding_v4';
-import { getParticleSettings } from './particleSettings.js?v=20260621_wedding_v4';
+// io.js - 婚禮現場控制 (鍵盤快捷鍵狀態機: 空白鍵切換玫瑰/LOGO, F 切換全螢幕)
+import { getParticleSettings } from './particleSettings.js?v=20260704_wedding_v5';
 
-const progressSlider = document.getElementById('uProgress');
-const cameraModeSelect = document.getElementById('cameraMode');
-const fullscreenButton = document.getElementById('enable-fullscreen');
-const consoleToggleBtn = document.getElementById('console-toggle');
-const vjConsole = document.getElementById('vj-console');
-const btnRose = document.getElementById('btnRose');
-const btnLogo = document.getElementById('btnLogo');
-const particleDensityInput = document.getElementById('particleDensity');
-const logoScaleInput = document.getElementById('logoScale');
-const pointSizeInput = document.getElementById('pointSize');
+const MODEL_URL = 'public/papa_meilland_rose/scene.gltf';
+const LOGO_URL = 'public/logo.png';
 
-let currentImageUrl = 'public/papa_meilland_rose/scene.gltf';
-let currentLogoUrl = 'public/logo.png';
-// Default state is Rose, which uses density 4 (60,000 particles)
-let currentParticleSettings = getParticleSettings(4);
-let rebuildScene = () => {};
-let progressTween = null;
+// 鎖定的最佳參數
+const ROSE = { density: 5, scale: 1.2, pointSize: 2.0 };
+const LOGO = { density: 1, scale: 0.46, pointSize: 0.55 };
+const TRANSITION_SECS = 4.0;
+const ROTATION_SPEED = 0.15; // rad/s
 
-export const getCurrentImageUrl = () => currentImageUrl;
-
-// State machine with locked optimal parameters aligned with screenshots
-// Rose defaults: scale = 1.2, pointSize = 1.35
 export const AppState = {
     uProgress: 0,
     targetProgress: 0,
     cameraMode: 'auto',
-    vectorFieldMode: 6,   // Logo Morph
-    isHandTrackingActive: false,
-    logoScale: 1.2,       // Rose default
-    fieldIntensity: 0.0,  // 0.0 = no explosion force
-    turbulence: 0.0,      // 0.0 = no turbulence
-    returnForce: 1.0,     // 1.0 = strong return force
-    pointSize: 1.35       // Rose default
+    logoScale: ROSE.scale,
+    pointSize: ROSE.pointSize,
+    rotationAngle: 0,
+    // 轉場中段的流體力場 (velocity shader 的 middleBump 保證靜止時完全無作用)
+    fieldIntensity: 0.05,
+    turbulence: 0.4,
+    returnForce: 1.0
 };
 
-// Easing function for smooth input
+let rebuildScene = async () => null;
+let sceneReady = false;
+let isBusy = false;
+let currentState = 'rose';
+let roseCount = 0;
+let logoCount = 0;
+
+export const getCurrentImageUrl = () => MODEL_URL;
+
+export function getInitialBuildOptions() {
+    return { ...getParticleSettings(ROSE.density), targetImageUrl: LOGO_URL };
+}
+
+export function markSceneReady(gpuData) {
+    if (gpuData && gpuData.pointsCount) {
+        roseCount = gpuData.pointsCount;
+    }
+    sceneReady = true;
+}
+
 function lerp(start, end, amt) {
     return (1 - amt) * start + amt * end;
+}
+
+// 依粒子數量換算等亮度的粒子大小 (亮度 ≈ 數量 × 大小²),讓密度切換瞬間不跳亮度
+function equivalentPointSize(size, fromCount, toCount) {
+    if (!fromCount || !toCount) return size;
+    return size * Math.sqrt(fromCount / toCount);
+}
+
+// 把累積的自轉角度收斂到最短路徑 (-π ~ π),轉場時最多只回轉半圈
+function normalizeRotation() {
+    const TWO_PI = Math.PI * 2;
+    let a = AppState.rotationAngle % TWO_PI;
+    if (a > Math.PI) a -= TWO_PI;
+    else if (a < -Math.PI) a += TWO_PI;
+    AppState.rotationAngle = a;
+}
+
+async function transitionToLogo() {
+    // 先以高密度重建 (畫面保留舊粒子直到新資源就緒,不會黑屏)
+    const gpuData = await rebuildScene(MODEL_URL, {
+        ...getParticleSettings(LOGO.density),
+        targetImageUrl: LOGO_URL
+    });
+    if (gpuData && gpuData.pointsCount) {
+        logoCount = gpuData.pointsCount;
+        AppState.pointSize = equivalentPointSize(ROSE.pointSize, roseCount, logoCount);
+    }
+
+    normalizeRotation();
+    await gsap.to(AppState, {
+        targetProgress: 1.0,
+        logoScale: LOGO.scale,
+        pointSize: LOGO.pointSize,
+        rotationAngle: 0,
+        duration: TRANSITION_SECS,
+        ease: 'power1.inOut'
+    });
+}
+
+async function transitionToRose() {
+    // 回程仍是高密度粒子,先過渡到等亮度的大小,重建後再無感切回鎖定值
+    const arrivalPointSize = equivalentPointSize(ROSE.pointSize, roseCount, logoCount || roseCount);
+    await gsap.to(AppState, {
+        targetProgress: 0.0,
+        logoScale: ROSE.scale,
+        pointSize: arrivalPointSize,
+        duration: TRANSITION_SECS,
+        ease: 'power1.inOut'
+    });
+
+    const gpuData = await rebuildScene(MODEL_URL, {
+        ...getParticleSettings(ROSE.density),
+        targetImageUrl: LOGO_URL
+    });
+    if (gpuData && gpuData.pointsCount) {
+        roseCount = gpuData.pointsCount;
+    }
+    AppState.pointSize = ROSE.pointSize;
+}
+
+async function toggleState() {
+    if (!sceneReady || isBusy) return;
+    isBusy = true;
+    try {
+        if (currentState === 'rose') {
+            await transitionToLogo();
+            currentState = 'logo';
+        } else {
+            await transitionToRose();
+            currentState = 'rose';
+        }
+    } catch (err) {
+        console.error('[IO] Transition failed:', err);
+    } finally {
+        isBusy = false;
+    }
+}
+
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            console.log(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
 }
 
 export async function initIO({ triggerRebuild } = {}) {
@@ -47,150 +138,27 @@ export async function initIO({ triggerRebuild } = {}) {
         rebuildScene = triggerRebuild;
     }
 
-    // Set initial values on inputs to match Rose defaults
-    if (particleDensityInput) particleDensityInput.value = 4;
-    if (logoScaleInput) logoScaleInput.value = 1.2;
-    if (pointSizeInput) pointSizeInput.value = 1.35;
+    window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        if (e.code === 'Space') {
+            e.preventDefault();
+            toggleState();
+        } else if (e.code === 'KeyF') {
+            toggleFullscreen();
+        }
+    });
 
-    // 1. Progress Slider Manual Control
-    if (progressSlider) {
-        progressSlider.addEventListener('input', (e) => {
-            if (progressTween) {
-                progressTween.kill();
-                progressTween = null;
-            }
-            AppState.targetProgress = parseFloat(e.target.value);
-        });
-    }
-
-    // 2. Camera Mode Select
-    if (cameraModeSelect) {
-        cameraModeSelect.addEventListener('change', (e) => {
-            AppState.cameraMode = e.target.value;
-        });
-    }
-
-    // 3. Smooth Auto-Transition Buttons via GSAP
-    if (btnRose) {
-        btnRose.addEventListener('click', () => {
-            if (progressTween) progressTween.kill();
-            
-            // Animate targetProgress, logoScale, and pointSize back to Rose defaults
-            progressTween = gsap.to(AppState, {
-                targetProgress: 0.0,
-                logoScale: 1.2,
-                pointSize: 1.35,
-                duration: 4.0,
-                ease: "power1.inOut",
-                onUpdate: () => {
-                    if (progressSlider) progressSlider.value = AppState.targetProgress;
-                    if (logoScaleInput) logoScaleInput.value = AppState.logoScale;
-                    if (pointSizeInput) pointSizeInput.value = AppState.pointSize;
-                },
-                onComplete: async () => {
-                    // Rebuild to Rose density (4) after transition finishes
-                    if (particleDensityInput && parseInt(particleDensityInput.value) !== 4) {
-                        particleDensityInput.value = 4;
-                        currentParticleSettings = getParticleSettings(4);
-                        await rebuildScene(currentImageUrl, {
-                            ...currentParticleSettings,
-                            targetImageUrl: currentLogoUrl
-                        });
-                    }
-                }
-            });
-        });
-    }
-
-    if (btnLogo) {
-        btnLogo.addEventListener('click', async () => {
-            if (progressTween) progressTween.kill();
-            
-            // Rebuild to LOGO density (1) first if it's not already
-            if (particleDensityInput && parseInt(particleDensityInput.value) !== 1) {
-                particleDensityInput.value = 1;
-                currentParticleSettings = getParticleSettings(1);
-                await rebuildScene(currentImageUrl, {
-                    ...currentParticleSettings,
-                    targetImageUrl: currentLogoUrl
-                });
-            }
-
-            // Animate targetProgress, logoScale, and pointSize to LOGO defaults (Scale = 15% -> 0.46, PointSize = 15% -> 0.55)
-            progressTween = gsap.to(AppState, {
-                targetProgress: 1.0,
-                logoScale: 0.46,
-                pointSize: 0.55,
-                duration: 4.0,
-                ease: "power1.inOut",
-                onUpdate: () => {
-                    if (progressSlider) progressSlider.value = AppState.targetProgress;
-                    if (logoScaleInput) logoScaleInput.value = AppState.logoScale;
-                    if (pointSizeInput) pointSizeInput.value = AppState.pointSize;
-                }
-            });
-        });
-    }
-
-    // 4. Parameter Adjustment Event Listeners
-    if (particleDensityInput) {
-        particleDensityInput.addEventListener('change', (e) => {
-            currentParticleSettings = getParticleSettings(e.target.value);
-            rebuildScene(currentImageUrl, {
-                ...currentParticleSettings,
-                targetImageUrl: currentLogoUrl
-            });
-        });
-    }
-
-    if (logoScaleInput) {
-        logoScaleInput.addEventListener('input', (e) => {
-            if (progressTween) {
-                progressTween.kill();
-                progressTween = null;
-            }
-            AppState.logoScale = parseFloat(e.target.value);
-        });
-    }
-
-    if (pointSizeInput) {
-        pointSizeInput.addEventListener('input', (e) => {
-            if (progressTween) {
-                progressTween.kill();
-                progressTween = null;
-            }
-            AppState.pointSize = parseFloat(e.target.value);
-        });
-    }
-
-    // 5. Fullscreen Button
-    if (fullscreenButton) {
-        fullscreenButton.addEventListener('click', () => {
-            if (!document.fullscreenElement) {
-                document.body.requestFullscreen().catch(err => {
-                    console.log(`Error attempting to enable fullscreen: ${err.message}`);
-                });
-            } else {
-                document.exitFullscreen();
-            }
-        });
-    }
-
-    // 6. Console Toggle Button
-    if (consoleToggleBtn && vjConsole) {
-        consoleToggleBtn.addEventListener('click', () => {
-            vjConsole.classList.toggle('collapsed');
-            if (vjConsole.classList.contains('collapsed')) {
-                consoleToggleBtn.innerText = '▲ 顯示面板';
-            } else {
-                consoleToggleBtn.innerText = '▼ 隱藏面板';
-            }
-        });
-    }
+    // 現場救援用除錯掛鉤 (可於 DevTools console 手動觸發切換)
+    window.__vfx = { AppState, toggleState, version: '20260704_wedding_v5' };
 }
 
 // Update loop called by main.js
 export function updateIO(deltaTime) {
-    // Smoothly interpolate current progress towards target progress
-    AppState.uProgress = lerp(AppState.uProgress, AppState.targetProgress, 5.0 * deltaTime);
+    // Clamp 插值量,分頁休眠喚醒後的大 delta 不會讓 uProgress 衝出範圍
+    const amt = Math.min(1, 5.0 * deltaTime);
+    AppState.uProgress = lerp(AppState.uProgress, AppState.targetProgress, amt);
+
+    // 玫瑰自轉: CPU 累積角度,隨形變進度自然減速停止
+    // (取代舊的 time * 0.15 反推歸零法 —— 那會依開頁時長回轉 N 圈)
+    AppState.rotationAngle += ROTATION_SPEED * deltaTime * (1 - AppState.uProgress);
 }

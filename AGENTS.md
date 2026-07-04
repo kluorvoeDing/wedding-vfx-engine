@@ -70,6 +70,19 @@
   3. **真實大氣擾動閃爍 (Scintillation)**：捨棄了單純 Sine wave 的廉價霓虹燈閃爍法，改在 Fragment Shader 中利用粒子空間座標生成亂數種子 (Seed)。這讓主要恆星保持穩定恆亮，而非主要星星則會錯開時間、隨機發出銳利短暫的閃光，完美模擬真實觀星體驗。
   4. **自適應 Bounding Box 擴充**：因星座位置較靠兩側（如 X=-12），在狹窄螢幕上容易被攝影機裁切。系統重新計算並將所有星座座標納入 Bounding Box 的擴張範圍中，讓攝影機的 Frustum Fitting 能正確自動拉遠，確保任何螢幕下都不會裁切到兩側星座。
 
+### 第十一階段：正式上線前穩定化 (Production Hardening, 2026-07-04)
+- **需求**：移除星座、移除控制面板改用快捷鍵（空白鍵切換、F 全螢幕）、修正切換故障與轉場迴轉 bug、鎖定新參數（玫瑰 pointSize 2.0 / 密度 5）。
+- **切換故障根因與修正**：
+  1. **黑屏閃爍**：舊版 `initGPGPU` 開頭即拆除舊粒子再非同步重載 GLTF（0.5~2 秒空窗）。改為「旁路建置 + 原子交換」：新資源全部就緒後才 `disposeCurrent()` 換入，畫面零中斷。
+  2. **並發重建孤兒 mesh**：快速連按時兩個非同步重建都會 `scene.add`，前者永久殘留（疊影）。以 `buildCounter` 作廢過期建置，並在 `io.js` 以 `isBusy` 鎖將「重建 + 轉場」全程序列化。
+  3. **VRAM 洩漏**：`GPUComputationRenderer` 的 render targets（每次約 16MB）從未釋放，整晚切換會累積至崩潰。`disposeCurrent()` 現在明確 dispose 所有 renderTargets、材質與 DataTextures。
+  4. **deltaTime 無上限**：分頁切換/螢幕休眠喚醒後 `lerp` 插值量超過 1 造成閃跳。`main.js` clamp dt ≤ 0.05、`updateIO` clamp 插值量 ≤ 1。
+  5. **初始建置密度不一致**：舊版首次載入走 density 1（240k），切換一輪後玫瑰變成 density 4（60k），外觀前後不一致。現在初始建置即採用鎖定的玫瑰參數。
+- **轉場迴轉 bug（確認為 bug）**：舊版 `uRotationAngle = time * 0.15`（開頁起無限累積），shader 以 `angle × (1 - uProgress)` 歸零 —— 轉場會把開頁至今的總角度全部倒轉（開頁 10 分鐘 ≈ 14 圈）。改為 CPU 累積角度（隨 uProgress 自然減速），切換前先正規化至 -π~π 並由 GSAP 同步收斂至 0，最多只回轉半圈；同時啟用轉場中段流體亂流（`middleBump` 保證靜止時零擾動），達成流體流動式切換。
+- **等亮度密度切換**：密度重建瞬間以 `size × √(fromCount/toCount)` 換算 pointSize，Additive Blending 下亮度不跳動。
+- **素材快取**：GLTF 頂點與 LOGO ImageData 首次載入後快取，之後切換零網路請求、重建僅需 CPU 重組。
+- **其他**：pixelRatio 上限 2；星點座標池固定（重建不重洗背景星空）；`frustumCulled = false` 回歸；移除 HUD 文字與所有面板 UI；快取版號 `?v=20260704_wedding_v5`；`window.__vfx` 提供現場救援用除錯掛鉤。
+
 ## 待優化項目 (TODOs)
 - 未來可考慮實作粒子顏色漸變 (根據速度或存活時間)。
 - 優化手機版效能 (可考慮加入自動偵測 FPS 降低渲染數量的機制)。
