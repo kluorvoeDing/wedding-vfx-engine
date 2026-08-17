@@ -1,6 +1,11 @@
 // io.js - 婚禮現場控制 (鍵盤快捷鍵狀態機: 空白鍵切換玫瑰/LOGO, F 切換全螢幕)
-import { getParticleSettings } from './particleSettings.js?v=20260705_wedding_v6';
-import { setActiveParticles } from './gpgpu.js?v=20260705_wedding_v6';
+import { getParticleSettings } from './particleSettings.js?v=20260817_wedding_v7';
+import { setActiveParticles } from './gpgpu.js?v=20260817_wedding_v7';
+import {
+    PLAYBACK_SETTINGS,
+    createAutoRotateController,
+    oppositeDisplayState
+} from './playbackSettings.js?v=20260817_wedding_v7';
 
 const MODEL_URL = 'public/papa_meilland_rose/scene.gltf';
 const LOGO_URL = 'public/logo.png';
@@ -29,8 +34,14 @@ export const AppState = {
 let sceneReady = false;
 let isBusy = false;
 let currentState = 'rose';
+let desiredState = 'rose';
 let roseCount = 0;
 let morphCount = 0;
+const autoRotateController = createAutoRotateController({
+    onRotate: () => toggleState({ resetAutoTimer: false }),
+    setTimer: (callback, delay) => window.setTimeout(callback, delay),
+    clearTimer: (timer) => window.clearTimeout(timer)
+});
 
 export function getBuildConfig() {
     return {
@@ -47,6 +58,7 @@ export function markSceneReady(gpuData) {
         morphCount = gpuData.morphVisibleCount || 0;
     }
     sceneReady = true;
+    void reconcileState();
 }
 
 function lerp(start, end, amt) {
@@ -99,22 +111,36 @@ async function transitionToRose() {
     AppState.pointSize = ROSE.pointSize;
 }
 
-async function toggleState() {
+async function reconcileState() {
     if (!sceneReady || isBusy) return;
     isBusy = true;
     try {
-        if (currentState === 'rose') {
-            await transitionToLogo();
-            currentState = 'logo';
-        } else {
-            await transitionToRose();
-            currentState = 'rose';
+        // 使用者可在轉場期間再次切換。每次抵達後重新讀取 desiredState，
+        // 確保最後一次操作意圖不會被 isBusy 靜默丟棄。
+        while (currentState !== desiredState) {
+            const nextState = desiredState;
+            if (nextState === 'logo') {
+                await transitionToLogo();
+            } else {
+                await transitionToRose();
+            }
+            currentState = nextState;
         }
     } catch (err) {
         console.error('[IO] Transition failed:', err);
     } finally {
         isBusy = false;
+        // Promise 完成與新按鍵可能落在同一幀；補一次避免遺漏。
+        if (sceneReady && currentState !== desiredState) {
+            void reconcileState();
+        }
     }
+}
+
+function toggleState({ resetAutoTimer = true } = {}) {
+    desiredState = oppositeDisplayState(desiredState);
+    if (resetAutoTimer) autoRotateController.schedule();
+    void reconcileState();
 }
 
 function toggleFullscreen() {
@@ -138,8 +164,15 @@ export async function initIO() {
         }
     });
 
+    autoRotateController.schedule();
+
     // 現場救援用除錯掛鉤 (可於 DevTools console 手動觸發切換)
-    window.__vfx = { AppState, toggleState, version: '20260705_wedding_v6' };
+    window.__vfx = {
+        AppState,
+        PlaybackSettings: PLAYBACK_SETTINGS,
+        toggleState,
+        version: '20260817_wedding_v7'
+    };
 }
 
 // Update loop called by main.js

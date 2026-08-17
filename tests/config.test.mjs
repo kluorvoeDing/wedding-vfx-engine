@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 
 import { MODE_CONFIGS, getModeConfig } from '../modes.js';
 import { getParticleSettings } from '../particleSettings.js';
+import {
+    PLAYBACK_SETTINGS,
+    createAutoRotateController,
+    oppositeDisplayState
+} from '../playbackSettings.js';
 
 test('mode registry exposes the wedding logo-only mode', () => {
     assert.equal(MODE_CONFIGS.length, 1);
@@ -33,4 +38,43 @@ test('particle density settings trade quality for real particle count', () => {
     assert.ok(highest.imageStep < fastest.imageStep);
     assert.equal(getParticleSettings(999).density, 5);
     assert.equal(getParticleSettings(-1).density, 1);
+});
+
+test('playback settings enable a five-minute automatic rotation', () => {
+    assert.equal(PLAYBACK_SETTINGS.autoRotateEnabled, true);
+    assert.equal(PLAYBACK_SETTINGS.autoRotateIntervalMs, 5 * 60 * 1000);
+    assert.equal(oppositeDisplayState('rose'), 'logo');
+    assert.equal(oppositeDisplayState('logo'), 'rose');
+});
+
+test('automatic rotation fires and schedules the next five-minute cycle', () => {
+    let rotateCount = 0;
+    let scheduledCallback;
+    let scheduledDelay;
+    const clearedTimers = [];
+    let nextTimer = 0;
+
+    const controller = createAutoRotateController({
+        onRotate: () => { rotateCount += 1; },
+        setTimer: (callback, delay) => {
+            scheduledCallback = callback;
+            scheduledDelay = delay;
+            nextTimer += 1;
+            return nextTimer;
+        },
+        clearTimer: (timer) => clearedTimers.push(timer)
+    });
+
+    controller.schedule();
+    assert.equal(scheduledDelay, 5 * 60 * 1000);
+    assert.equal(nextTimer, 1);
+
+    scheduledCallback();
+    assert.equal(rotateCount, 1);
+    assert.equal(nextTimer, 2);
+    assert.deepEqual(clearedTimers, []);
+
+    controller.schedule();
+    assert.equal(nextTimer, 3);
+    assert.deepEqual(clearedTimers, [2]);
 });
