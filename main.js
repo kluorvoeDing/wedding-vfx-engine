@@ -5,9 +5,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260817_wedding_v7';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260817_wedding_v7';
-import { initIO, updateIO, AppState, getBuildConfig, markSceneReady } from './io.js?v=20260817_wedding_v7';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260818_wedding_v8';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260818_wedding_v8';
+import { initIO, updateIO, AppState, getBuildConfig, markSceneReady } from './io.js?v=20260818_wedding_v8';
 
 let scene, renderer, composer, camera;
 let boundingBox;
@@ -53,6 +53,12 @@ async function init() {
     const gpuData = await initGPGPU(renderer, scene, getBuildConfig());
     boundingBox = gpuData.boundingBox;
     markSceneReady(gpuData);
+
+    // 現場診斷用：讓 __vfx.simStats(__vfx.renderer) 能讀回粒子實際座標
+    if (window.__vfx) {
+        window.__vfx.renderer = renderer;
+        window.__vfx.boundingBox = boundingBox;
+    }
 
     // Window resize
     window.addEventListener('resize', onWindowResize);

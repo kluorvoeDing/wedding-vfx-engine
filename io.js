@@ -1,11 +1,24 @@
 // io.js - 婚禮現場控制 (鍵盤快捷鍵狀態機: 空白鍵切換玫瑰/LOGO, F 切換全螢幕)
-import { getParticleSettings } from './particleSettings.js?v=20260817_wedding_v7';
-import { setActiveParticles } from './gpgpu.js?v=20260817_wedding_v7';
+//
+// 切換是「隨時可反轉」的連續動畫：按鍵只改變目標值，實際位移交給每幀的
+// updateIO 追隨。因此這裡沒有 async / await / 忙碌鎖 / GSAP tween ——
+// 架構上不存在可以卡住按鍵的東西，連按或中途反轉都必定即時生效。
+import { getParticleSettings } from './particleSettings.js?v=20260818_wedding_v8';
+import { setActiveParticles, getSimStats } from './gpgpu.js?v=20260818_wedding_v8';
 import {
     PLAYBACK_SETTINGS,
     createAutoRotateController,
     oppositeDisplayState
-} from './playbackSettings.js?v=20260817_wedding_v7';
+} from './playbackSettings.js?v=20260818_wedding_v8';
+import {
+    MORPH_SETTINGS,
+    progressTargetFor,
+    smoothDamp,
+    activeSimFor,
+    wrapAngle,
+    lerp,
+    equivalentPointSize
+} from './morphController.js?v=20260818_wedding_v8';
 
 const MODEL_URL = 'public/papa_meilland_rose/scene.gltf';
 const LOGO_URL = 'public/logo.png';
@@ -13,10 +26,7 @@ const LOGO_URL = 'public/logo.png';
 // 鎖定的最佳參數
 const ROSE = { density: 5, scale: 1.2, pointSize: 2.0 };
 const LOGO = { density: 1, scale: 0.46, pointSize: 0.55 };
-const TRANSITION_SECS = 2.0;
-const TRANSITION_EASE = 'power2.out'; // 快出慢收: 按下瞬間就看得到動靜
-const ROTATION_SPEED = 0.15; // rad/s
-const PROGRESS_GAIN = 12.0;  // uProgress 追隨速度 (越高越即時)
+const KEY_DEBOUNCE_MS = 150; // 只擋機械式重複觸發；正常連按每一下都算數
 
 export const AppState = {
     uProgress: 0,
@@ -32,11 +42,14 @@ export const AppState = {
 };
 
 let sceneReady = false;
-let isBusy = false;
-let currentState = 'rose';
 let desiredState = 'rose';
-let roseCount = 0;
-let morphCount = 0;
+let activeSim = 'rose';
+let progressVelocity = 0;
+let spinAngle = 0;
+let lastKeyAt = -Infinity;
+// morph 模擬停在玫瑰姿態時的等亮度粒子大小 (兩套模擬互換時亮度不跳動)
+let morphPointSizeAtRose = ROSE.pointSize;
+
 const autoRotateController = createAutoRotateController({
     onRotate: () => toggleState({ resetAutoTimer: false }),
     setTimer: (callback, delay) => window.setTimeout(callback, delay),
@@ -54,93 +67,18 @@ export function getBuildConfig() {
 
 export function markSceneReady(gpuData) {
     if (gpuData) {
-        roseCount = gpuData.roseVisibleCount || 0;
-        morphCount = gpuData.morphVisibleCount || 0;
+        const roseCount = gpuData.roseVisibleCount || 0;
+        const morphCount = gpuData.morphVisibleCount || 0;
+        morphPointSizeAtRose = equivalentPointSize(ROSE.pointSize, roseCount, morphCount);
     }
     sceneReady = true;
-    void reconcileState();
 }
 
-function lerp(start, end, amt) {
-    return (1 - amt) * start + amt * end;
-}
-
-// 依粒子數量換算等亮度的粒子大小 (亮度 ≈ 數量 × 大小²),讓密度切換瞬間不跳亮度
-function equivalentPointSize(size, fromCount, toCount) {
-    if (!fromCount || !toCount) return size;
-    return size * Math.sqrt(fromCount / toCount);
-}
-
-// 把累積的自轉角度收斂到最短路徑 (-π ~ π),轉場時最多只回轉半圈
-function normalizeRotation() {
-    const TWO_PI = Math.PI * 2;
-    let a = AppState.rotationAngle % TWO_PI;
-    if (a > Math.PI) a -= TWO_PI;
-    else if (a < -Math.PI) a += TWO_PI;
-    AppState.rotationAngle = a;
-}
-
-async function transitionToLogo() {
-    // 瞬間切到高密度形變系統 (常駐同步運行,零重建),等亮度換算避免亮度跳動
-    setActiveParticles('morph');
-    AppState.pointSize = equivalentPointSize(ROSE.pointSize, roseCount, morphCount);
-
-    normalizeRotation();
-    await gsap.to(AppState, {
-        targetProgress: 1.0,
-        logoScale: LOGO.scale,
-        pointSize: LOGO.pointSize,
-        rotationAngle: 0,
-        duration: TRANSITION_SECS,
-        ease: TRANSITION_EASE
-    });
-}
-
-async function transitionToRose() {
-    const arrivalPointSize = equivalentPointSize(ROSE.pointSize, roseCount, morphCount || roseCount);
-    await gsap.to(AppState, {
-        targetProgress: 0.0,
-        logoScale: ROSE.scale,
-        pointSize: arrivalPointSize,
-        duration: TRANSITION_SECS,
-        ease: TRANSITION_EASE
-    });
-
-    // 到站後瞬間切回待機系統 (它全程停在玫瑰形狀,無縫接手)
-    setActiveParticles('rose');
-    AppState.pointSize = ROSE.pointSize;
-}
-
-async function reconcileState() {
-    if (!sceneReady || isBusy) return;
-    isBusy = true;
-    try {
-        // 使用者可在轉場期間再次切換。每次抵達後重新讀取 desiredState，
-        // 確保最後一次操作意圖不會被 isBusy 靜默丟棄。
-        while (currentState !== desiredState) {
-            const nextState = desiredState;
-            if (nextState === 'logo') {
-                await transitionToLogo();
-            } else {
-                await transitionToRose();
-            }
-            currentState = nextState;
-        }
-    } catch (err) {
-        console.error('[IO] Transition failed:', err);
-    } finally {
-        isBusy = false;
-        // Promise 完成與新按鍵可能落在同一幀；補一次避免遺漏。
-        if (sceneReady && currentState !== desiredState) {
-            void reconcileState();
-        }
-    }
-}
-
+// 按鍵只做一件事：改變目標。沒有任何路徑可以擋住它。
 function toggleState({ resetAutoTimer = true } = {}) {
     desiredState = oppositeDisplayState(desiredState);
+    AppState.targetProgress = progressTargetFor(desiredState);
     if (resetAutoTimer) autoRotateController.schedule();
-    void reconcileState();
 }
 
 function toggleFullscreen() {
@@ -158,6 +96,9 @@ export async function initIO() {
         if (e.repeat) return;
         if (e.code === 'Space') {
             e.preventDefault();
+            const now = performance.now();
+            if (now - lastKeyAt < KEY_DEBOUNCE_MS) return;
+            lastKeyAt = now;
             toggleState();
         } else if (e.code === 'KeyF') {
             toggleFullscreen();
@@ -170,17 +111,53 @@ export async function initIO() {
     window.__vfx = {
         AppState,
         PlaybackSettings: PLAYBACK_SETTINGS,
+        MorphSettings: MORPH_SETTINGS,
         toggleState,
-        version: '20260817_wedding_v7'
+        getDesiredState: () => desiredState,
+        getActiveSim: () => activeSim,
+        simStats: (renderer) => getSimStats(renderer),
+        version: '20260818_wedding_v8'
     };
 }
 
 // Update loop called by main.js
 export function updateIO(deltaTime) {
-    // Clamp 插值量,分頁休眠喚醒後的大 delta 不會讓 uProgress 衝出範圍
-    const amt = Math.min(1, PROGRESS_GAIN * deltaTime);
-    AppState.uProgress = lerp(AppState.uProgress, AppState.targetProgress, amt);
+    if (!sceneReady || !(deltaTime > 0)) return;
 
-    // 玫瑰自轉: CPU 累積角度,隨形變進度自然減速停止
-    AppState.rotationAngle += ROTATION_SPEED * deltaTime * (1 - AppState.uProgress);
+    const { smoothTime, settleEpsilon, rotationSpeed } = MORPH_SETTINGS;
+    const target = AppState.targetProgress;
+
+    const stepped = smoothDamp(AppState.uProgress, target, progressVelocity, smoothTime, deltaTime);
+    AppState.uProgress = stepped.value;
+    progressVelocity = stepped.velocity;
+
+    if (Math.abs(AppState.uProgress - target) < settleEpsilon) {
+        AppState.uProgress = target;
+        progressVelocity = 0;
+    }
+
+    const p = AppState.uProgress;
+
+    // 自轉：只在玫瑰完全待機時累積。轉場期間 spinAngle 凍結，因此不可能發生
+    // 角度回繞造成的跳變；p=1 時角度精確為 0，保證 LOGO 正面靜止。
+    // 反向切回時角度會平順長回原值再續轉，倒轉幅度恆定 ≤ 半圈。
+    if (p < settleEpsilon) {
+        spinAngle = wrapAngle(spinAngle + rotationSpeed * deltaTime);
+    }
+    AppState.rotationAngle = spinAngle * (1 - p);
+
+    // 顯示中的模擬與視覺參數，全部由 p 連續推導 —— 沒有分段排程，故可隨時反轉
+    const nextSim = activeSimFor(desiredState, p, settleEpsilon);
+    if (nextSim !== activeSim) {
+        setActiveParticles(nextSim);
+        activeSim = nextSim;
+    }
+
+    if (activeSim === 'rose') {
+        AppState.logoScale = ROSE.scale;
+        AppState.pointSize = ROSE.pointSize;
+    } else {
+        AppState.logoScale = lerp(ROSE.scale, LOGO.scale, p);
+        AppState.pointSize = lerp(morphPointSizeAtRose, LOGO.pointSize, p);
+    }
 }

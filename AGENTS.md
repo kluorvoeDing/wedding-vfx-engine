@@ -91,6 +91,21 @@
 - **實測成果**（同機同法）：可見動靜 1,671→**50ms**，99% 完成 5,138→**1,666ms**，全程零 >50ms 卡頓。
 - **注意**：雙 sim 常駐代價為每幀多算一套模擬（總計 ~32 萬顆，GPU 負載輕）與 ~20MB VRAM，換得切換零成本與整晚零資源 churn。
 
+### 第十三階段：切換無鎖化 — 排除連按延遲/無反應 (2026-08-18)
+- **問題**：現場連按空白鍵會出現「延遲」或「完全沒反應」。實測確認三個成因，病灶同一個：用 `async/await` + `isBusy` 鎖 + GSAP tween 去表達一個本質上「隨時可反轉」的動畫。
+  1. **按鍵被靜默吞掉**：連按兩下，第二下完全沒建立 tween，只翻了 `desiredState` 就被 `isBusy` 擋掉。等第一段 2 秒跑完才排入第二段回程 —— 連按兩下 = **4 秒來回動畫且回到原點**。
+  2. **kill tween 會永久卡死**：實測 GSAP tween 被 `.kill()` 後 promise 永遠停在 PENDING，`await` 會永久掛住、`isBusy` 永遠為 true。因此「按鍵時 kill 掉舊 tween」這條直覺修法**絕對不能走**。
+  3. **失焦即凍結**：分頁 hidden 時 rAF 與 GSAP ticker 全停，`AppState` 留著跑不完的 tween、`isBusy` 卡住；alt-tab／螢幕保護／投影切換都會踩到。
+- **修法**：不補鎖的漏洞，而是**整個移除鎖與 await**。
+  1. 新增 `morphController.js`（純函式、可單元測試）：臨界阻尼平滑 `smoothDamp`、`activeSimFor`、`wrapAngle`、等亮度換算。
+  2. `toggleState()` 縮為同步三行：翻 `desiredState`、設 `targetProgress`、重置輪播計時。**沒有任何路徑能擋住它**。
+  3. 所有視覺屬性（`logoScale`／`pointSize`／`rotationAngle`／顯示中的模擬）改由 `uProgress` 每幀連續推導。選臨界阻尼而非指數 lerp，是因為它中途反轉時速度連續不頓挫，且總時長可控。
+  4. 自轉改為 `spinAngle × (1 - p)`，且 `spinAngle` 只在玫瑰完全待機時累積 —— 轉場期間凍結故不可能發生角度回繞跳變，`p=1` 時精確為 0（LOGO 保證正面靜止），反向可逆，倒轉幅度恆定 ≤ 半圈。
+- **效能**：(a) `curlNoise` 原本無條件求值，靜止時（整晚 90% 時間）白燒 26 萬顆 × 18 次 simplex noise/幀，改用 `middleBump > 0.001` 包住（uProgress 是 uniform，分支一致無 divergence）。(b) `updateGPGPU` 跳過隱藏的模擬（它正停在靜止姿態，凍結安全），待機 GPU 負擔降為約 1/5.5。
+- **實測成果**（以正式模組實例逐幀驅動）：連按 10 下／30 下皆 **0 個按鍵被吞掉**、無停滯、1.5 秒內收斂到正確狀態；中途反轉掉頭 50ms；失焦後自我復原；`gsap.getTweensOf(AppState).length === 0`（GSAP 已完全脫離此路徑）。轉場 95% 於 0.97s、99% 於 1.33s、無 overshoot。
+- **新增診斷**：`__vfx.simStats(__vfx.renderer)` 可讀回兩套模擬的可見性與粒子實際座標範圍（玫瑰 x5.5×y6.4 → LOGO x12.9×y2.4），現場可據此判斷形變是否真的發生。
+- **測試**：新增 `tests/morph.test.mjs`，涵蓋連按不吞鍵、中途反轉、1.2 秒收斂、模擬換手時機、自轉可逆與歸一化，共 13 項全通過。
+
 ## 待優化項目 (TODOs)
 - 未來可考慮實作粒子顏色漸變 (根據速度或存活時間)。
 - 優化手機版效能 (可考慮加入自動偵測 FPS 降低渲染數量的機制)。

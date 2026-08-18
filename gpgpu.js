@@ -124,9 +124,15 @@ void main() {
         // middleBump peaks at uProgress = 0.5 and vanishes at both rest states,
         // so the flow forces only act while morphing
         float middleBump = sin(uProgress * 3.14159);
-        vec3 outward = normalize(basePos + vec3(0.001)) * 40.0 * uIntensity;
-        vec3 flow = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
-        vec3 transitionForce = (outward + flow) * middleBump;
+
+        // 靜止時 middleBump = 0，力場毫無作用，故整段跳過。uProgress 是 uniform，
+        // 分支對所有 invocation 一致，不會造成 GPU divergence。
+        vec3 transitionForce = vec3(0.0);
+        if (middleBump > 0.001) {
+            vec3 outward = normalize(basePos + vec3(0.001)) * 40.0 * uIntensity;
+            vec3 flow = curlNoise(pos * 0.2 + uTime * 1.5) * 60.0 * uTurbulence;
+            transitionForce = (outward + flow) * middleBump;
+        }
 
         targetVel = (finalPos - pos) * 8.0 * uReturnForce + transitionForce;
     }
@@ -534,9 +540,38 @@ export function setActiveParticles(name) {
     return { visibleCount: target.visibleCount };
 }
 
+// 現場診斷用：回報兩套模擬的狀態與粒子實際座標範圍，
+// 可在 DevTools 以 __vfx.simStats() 確認形變是否真的發生。
+export function getSimStats(renderer) {
+    const stats = {};
+    for (const [name, sim] of Object.entries(sims)) {
+        if (!sim) { stats[name] = null; continue; }
+        const entry = { visible: sim.mesh.visible, visibleCount: sim.visibleCount, morphs: sim.morphs };
+        if (renderer) {
+            const rt = sim.compute.getCurrentRenderTarget(sim.posVar);
+            const w = Math.min(64, rt.width);
+            const buf = new Float32Array(w * w * 4);
+            renderer.readRenderTargetPixels(rt, 0, 0, w, w, buf);
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, n = 0;
+            for (let i = 0; i < w * w; i++) {
+                if (buf[i * 4 + 3] > 1.5) continue; // 跳過填充 texel
+                minX = Math.min(minX, buf[i * 4]); maxX = Math.max(maxX, buf[i * 4]);
+                minY = Math.min(minY, buf[i * 4 + 1]); maxY = Math.max(maxY, buf[i * 4 + 1]);
+                n++;
+            }
+            entry.sampled = n;
+            if (n) entry.extent = { x: +(maxX - minX).toFixed(2), y: +(maxY - minY).toFixed(2) };
+        }
+        stats[name] = entry;
+    }
+    return stats;
+}
+
 export function updateGPGPU(time, appState) {
     for (const sim of [sims.rose, sims.morph]) {
-        if (!sim) continue;
+        // 隱藏的那套依定義正停在靜止姿態（切回來時姿態不變），凍結它即可。
+        // 待機時只算 rose 的 5.8 萬顆，而非兩套合計 32 萬顆。
+        if (!sim || !sim.mesh.visible) continue;
 
         const vu = sim.velVar.material.uniforms;
         vu.uTime.value = time;
