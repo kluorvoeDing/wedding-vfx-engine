@@ -3,13 +3,13 @@
 // 切換是「隨時可反轉」的連續動畫：按鍵只改變目標值，實際位移交給每幀的
 // updateIO 追隨。因此這裡沒有 async / await / 忙碌鎖 / GSAP tween ——
 // 架構上不存在可以卡住按鍵的東西，連按或中途反轉都必定即時生效。
-import { getParticleSettings } from './particleSettings.js?v=20260818_wedding_v8';
-import { setActiveParticles, getSimStats } from './gpgpu.js?v=20260818_wedding_v8';
+import { getParticleSettings } from './particleSettings.js?v=20260819_wedding_v9';
+import { setActiveParticles, getSimStats } from './gpgpu.js?v=20260819_wedding_v9';
 import {
     PLAYBACK_SETTINGS,
     createAutoRotateController,
     oppositeDisplayState
-} from './playbackSettings.js?v=20260818_wedding_v8';
+} from './playbackSettings.js?v=20260819_wedding_v9';
 import {
     MORPH_SETTINGS,
     progressTargetFor,
@@ -18,7 +18,7 @@ import {
     wrapAngle,
     lerp,
     equivalentPointSize
-} from './morphController.js?v=20260818_wedding_v8';
+} from './morphController.js?v=20260819_wedding_v9';
 
 const MODEL_URL = 'public/papa_meilland_rose/scene.gltf';
 const LOGO_URL = 'public/logo.png';
@@ -116,7 +116,8 @@ export async function initIO() {
         getDesiredState: () => desiredState,
         getActiveSim: () => activeSim,
         simStats: (renderer) => getSimStats(renderer),
-        version: '20260818_wedding_v8'
+        cancelAutoRotate: () => autoRotateController.cancel(),
+        version: '20260819_wedding_v9'
     };
 }
 

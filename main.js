@@ -5,13 +5,14 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 
-import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260818_wedding_v8';
-import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260818_wedding_v8';
-import { initIO, updateIO, AppState, getBuildConfig, markSceneReady } from './io.js?v=20260818_wedding_v8';
+import { initGPGPU, updateGPGPU } from './gpgpu.js?v=20260819_wedding_v9';
+import { initCamera, updateCamera, onWindowResize as updateCameraResize } from './camera.js?v=20260819_wedding_v9';
+import { initIO, updateIO, AppState, getBuildConfig, markSceneReady } from './io.js?v=20260819_wedding_v9';
 
 let scene, renderer, composer, camera;
 let boundingBox;
 let lastTime = 0;
+let loopRunning = true;
 
 async function init() {
     // 1. Scene Setup
@@ -58,6 +59,14 @@ async function init() {
     if (window.__vfx) {
         window.__vfx.renderer = renderer;
         window.__vfx.boundingBox = boundingBox;
+        // 離線算圖用：停掉即時迴圈後以固定 dt 逐幀推進，產出不受機器效能影響
+        window.__vfx.stopLoop = () => { loopRunning = false; };
+        window.__vfx.renderFrame = (dt, t) => {
+            updateIO(dt);
+            updateCamera(dt, AppState, boundingBox);
+            updateGPGPU(t, AppState);
+            composer.render(dt);
+        };
     }
 
     // Window resize
@@ -74,6 +83,7 @@ function onWindowResize() {
 }
 
 function animate(time) {
+    if (!loopRunning) return; // 離線算圖時停用即時迴圈，改由外部逐幀驅動
     requestAnimationFrame(animate);
 
     const timeSec = time * 0.001;
