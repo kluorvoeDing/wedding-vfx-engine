@@ -114,7 +114,7 @@ GitHub repo：<https://github.com/kluorvoeDing/wedding-vfx-engine>
 
 目前分支：`feature/wedding-logo-only`
 
-盤點時本地 HEAD：`164d6d413d13c236e9637c17a7685c70df8b0fae`，與同名 `origin` 分支一致。
+收尾後目前 HEAD：`a6a78d34982098da0af4e4ed1f242e200bf2f7d7`，與同名 `origin` 分支一致；本次文件收尾已提交並推送。
 
 GitHub 會保存已追蹤的程式、測試、文件、授權素材、PNG 與 `vercel.json`。`.git/`、`.claude/`、`.vercel/` 不在 GitHub；本次封存包會保存它們及本地 Git 狀態。封存專用的 `ARCHIVE_README.md` 與 `FILE_MANIFEST` 只放在封存包，不提交 GitHub；封存包本身也不會提交。
 
