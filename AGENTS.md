@@ -2,6 +2,17 @@
 
 本檔案記錄了系統核心架構的迭代與 AI 輔助開發之重要決策。
 
+## 封存維護規則（2026-09-09）
+
+本婚禮專案已完成現場用途，現在是「婚禮已結束，進入封存維護」狀態。後續工作以可恢復性與保存優先：不得主動升級依賴、重構程式、重新渲染成果或為了整理外觀搬移/重新命名檔案。
+
+- **不得覆蓋或刪除的素材與成果**：`public/logo.png`、目前執行使用的 `public/papa_meilland_rose/`（含 `scene.gltf`、`scene.bin`、textures 與 license）、保留的原始素材 `public/3D玫瑰花素材/`、`public/photo.png`、所有根目錄程式/測試、`AGENTS.md`、`README.md`、以及本地 `.git/` 歷史。若日後出現 `dist/`、`build/`、`out/`、`render/` 或 `output/`，先視為可能的交付成果，不得僅因名稱或大小刪除。
+- **已確認的可重建候選與限制**：本次清理前後均未發現 `node_modules/`、`.next/`、`.cache/`、`coverage/`、Python `__pycache__/`、`dist/`、`build/`、`out/`、`render/` 或 `output/`。工作樹中的 5 個 `.DS_Store` 僅為 Finder metadata，已移除；`.gitignore` 已忽略它們。未來即使出現 `node_modules/`，也不能只憑名稱自動刪除，因為本 repo 沒有 `package.json`/lockfile，精確依賴來源目前只記錄在 `index.html` 的 CDN URL。不要刪全域套件或共用快取。
+- **恢復入口**：先閱讀 `README.md` 與 `FILE_INDEX.md`；在 repo 根目錄執行 `python3 -m http.server 57832`，再開啟 `http://127.0.0.1:57832/?v=20260819_wedding_v9`。可先執行 `node --test tests/*.mjs`；瀏覽器恢復還需要可用的 ES modules、WebGL/GPGPU、Three.js/GSAP CDN 網路存取，並以 `__vfx.getDesiredState()`、`__vfx.getActiveSim()`、`__vfx.simStats(__vfx.renderer)` 做現場診斷。不要把單元測試通過當成完整 GPU/瀏覽器恢復已驗證。
+- **外部依賴與恢復限制**：Three.js `0.160.0` 與 addons 從 `unpkg.com` 載入，GSAP `3.12.4` 從 cdnjs 載入；它們沒有被 vendor 進 repo。Vercel 是目前的靜態託管服務，`vercel.json` 在 GitHub；`.vercel/` 僅是本機部署連結 metadata，僅進封存包、不進 GitHub。`audio.js` 的麥克風管線需要使用者授權，且目前入口未發現引用；不得在未授權下取得或保存音訊/憑證。
+- **遠端與外部資料界線**：不得自動修改 GitHub、切換或合併分支、force push、建立 PR、重新部署、刪除 Vercel/Notion/雲端資料或停用服務。若使用者明確要求本 repo 的封存收尾，最多只在已確認的目前分支逐項提交本次文件，並推送同一遠端分支；既有其他分支的未推送提交不得順便發布。
+- **目前現況補充**：`io.js` 執行路徑使用 `public/papa_meilland_rose/scene.gltf` 與 `public/logo.png`。`public/3D玫瑰花素材/rose_scan_for_valentines_day_2023/` 仍完整保留；歷史紀錄中的「移除素材」是指不再由執行路徑載入，不是本次實體刪除。`photo.png`、`audio.js`、`modes.js` 目前沒有被主入口引用的證據，用途缺口已記在 `FILE_INDEX.md`，不因未引用而刪除。盤點時沒有找到獨立的影片 render/output 成品。
+
 ## Codex / GitHub 操作規則
 
 - 本 repo 的遠端為 `https://github.com/kluorvoeDing/wedding-vfx-engine.git`。
@@ -37,7 +48,7 @@
 - **需求**：用戶希望精簡並聚焦視覺特效，移除不符合主題的 3D 素材與效果，並調整結尾禮炮的色調。
 - **技術實現**：
   1. **移除不適用效果**：從網頁中移除「萬花筒祝福」、「星圖誓約」、「頭紗絲綢」、「誓言心跳」等 4 種力場模式，專注於保留更流暢的其餘力場。
-  2. **模型精簡**：移除品質未達預期的 `rose_scan_for_valentines_day_2023` 素材，僅保留高精細度的白玫瑰 3D 模型。
+  2. **模型精簡**：將品質未達預期的 `rose_scan_for_valentines_day_2023` 從執行路徑移除；原始素材仍保留於 `public/3D玫瑰花素材/`，以保存來源與日後恢復選項。執行路徑目前使用高精細度的 `papa_meilland_rose` 白玫瑰模型。
   3. **配色調整**：將「金粉禮炮」模式的金色調，重新配置為配合婚禮白色主題的「銀白禮炮」(Silver Finale)，並調整粒子色調為銀白色 `(0.9, 0.95, 1.0)`。
 
 ### 第六階段：玫瑰粒子調色與混色優化

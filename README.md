@@ -1,54 +1,125 @@
-# VFX Engine (Wedding Special Edition)
+# Wedding VFX Engine — 封存版
 
-基於 Three.js 與 GPGPU (General-Purpose computing on Graphics Processing Units) 技術打造的頂級粒子視覺特效引擎。此版本為 **婚禮專屬特製分支 (feature/wedding-logo-only)**，專為婚禮現場與主持人切換操作設計。
+> 狀態：**婚禮已結束，進入封存維護**（2026-09-09）。
+> 目前 Git 分支：`feature/wedding-logo-only`。
+> 本文件描述實際保留內容與恢復邊界；不代表外部備份或未驗證的完整離線恢復。
 
-## 核心技術特色
-- **百萬級粒子運算**：使用 GPGPU 技術，將百萬顆粒子的物理運算完全卸載至顯卡，實現穩定的 60+ FPS。
-- **雙紋理映射 (Dual Texture Mapping)**：同時在 GPU 記憶體中儲存兩組頂點座標 (原始 3D 玫瑰模型與目標 2D LOGO)，實現粒子在不同空間形態間的完美形變 (Morphing)。
-- **流體轉場 (Fluid Morph)**：形變過程中注入 Curl Noise 流體亂流（僅於轉場中段作用，靜止時完全無擾動），粒子以流動方式在玫瑰與 LOGO 之間往返。
-- **常駐雙模擬系統 (Dual Persistent Sims)**：啟動時同時建好「玫瑰待機（低密度）」與「形變表演（高密度）」兩套 GPGPU 模擬，切換僅改變顯示對象——零重建、零上傳、零 shader 編譯。待機時只計算顯示中的那套，GPU 負擔約為同時計算的 1/5.5。
-- **無鎖可中斷狀態機 (Interruptible State Machine)**：切換是由臨界阻尼平滑驅動的連續動畫，不使用 promise／忙碌鎖／tween。按鍵只改變目標值，因此連按或轉場中途反轉都必定即時生效，架構上不存在可以卡住按鍵的東西。
+## 專案用途
 
-## 操作方式 (Wedding Mode)
-畫面無任何控制面板，全由鍵盤快捷鍵操作：
+這是婚禮現場用的 Three.js + GPGPU 粒子視覺效果：白玫瑰粒子待機自轉，按空白鍵後流體形變成婚禮 LOGO；再按一次返回玫瑰。現行版本採常駐雙模擬與可中斷狀態機，畫面沒有控制面板。
 
-| 按鍵 | 功能 |
-|------|------|
-| `空白鍵` | 玫瑰 ⇄ LOGO 一鍵切換（約 1.2 秒流體轉場，可隨時中途反轉，連按不漏鍵） |
-| `F` | 進入 / 離開全螢幕 |
+目前可操作功能：
 
-系統預設每 **5 分鐘**自動在玫瑰與 LOGO 之間輪播切換；手動切換後會重新計時 5 分鐘。可在 `playbackSettings.js` 調整開關與間隔。
+- `空白鍵`：玫瑰 ⇄ LOGO，轉場約 1.2 秒，可中途反轉。
+- `F`：進入/離開全螢幕。
+- 預設每 5 分鐘自動切換一次；手動切換會重新計時，可在 `playbackSettings.js` 調整。
+- 玫瑰狀態使用 scale `1.2`、point size `2.0`、density `5`；LOGO 狀態使用 scale `0.46`、point size `0.55`、density `1`。這些值位於 `io.js`。
 
-兩種狀態（參數已鎖定最佳值）：
-1. **白玫瑰待機狀態**：適合於婚禮空檔時間無限期播放，純黑背景中僅有粒子構成的白玫瑰緩慢自轉。（scale 1.2 / pointSize 2.0 / 密度 5）
-   閒置 5 分鐘會自動切換一次（手動按鍵會重置計時）。
-2. **LOGO 進場狀態**：配合主持人進場 cue 點，按下空白鍵後粒子平滑停轉並重組為婚禮 LOGO 靜止呈現。（scale 0.46 / pointSize 0.55 / 密度 1）
+目前執行入口實際載入：
 
-## 如何啟動
-本專案為純前端架構 (HTML/CSS/JS)，無需複雜的 Node.js 編譯。
-推薦使用 Python 本機伺服器啟動：
-`python3 -m http.server 57832`
-隨後在瀏覽器開啟 `http://127.0.0.1:57832/` 即可體驗。
+- 模型：`public/papa_meilland_rose/scene.gltf`。
+- LOGO：`public/logo.png`。
 
-## 測試
+## 保留目錄樹
+
+以下是清理後的工作樹重點；`.git/`、`.claude/`、`.vercel/` 等隱藏內容也會在封存包中保留，完整檔案與雜湊以封存包內 `FILE_MANIFEST` 為準。
+
+```text
+.
+├── AGENTS.md                       # 封存維護規則與歷史開發決策
+├── README.md                       # 本文件：入口、恢復與限制
+├── FILE_INDEX.md                   # 按用途的保留檔案索引
+├── CLEANUP_LOG.md                  # 本次清理清單與清理前後大小
+├── .gitignore
+├── .claude/                        # ignored；本機啟動/權限設定，封存保留
+│   ├── launch.json
+│   └── settings.local.json
+├── .vercel/                        # ignored；部署連結 metadata，封存保留
+│   ├── project.json
+│   └── README.txt
+├── index.html                      # Web 入口與 CDN import map
+├── main.js                         # renderer、後期處理、主迴圈
+├── gpgpu.js                        # GLTF/LOGO 與兩套 GPGPU 粒子模擬
+├── io.js                           # 鍵盤狀態機與 __vfx 診斷掛鉤
+├── camera.js                       # 自動運鏡與視錐 fitting
+├── morphController.js              # 形變純函式核心
+├── playbackSettings.js             # 自動輪播設定
+├── particleSettings.js             # 粒子密度設定
+├── modes.js                        # 婚禮 mode registry（主入口未引用）
+├── audio.js                        # 麥克風頻譜管線（目前未接入入口）
+├── vercel.json                     # 靜態託管設定
+├── public/
+│   ├── logo.png                    # 重要成果：目前 LOGO 目標
+│   ├── photo.png                   # 保留素材；用途未由 repo 證實
+│   ├── papa_meilland_rose/         # 目前執行使用的模型、貼圖、license
+│   └── 3D玫瑰花素材/
+│       ├── rose/                   # 保留原始/歷史模型與 license
+│       └── rose_scan_for_valentines_day_2023/  # 保留原始/歷史模型與 license
+└── tests/
+    ├── config.test.mjs
+    └── morph.test.mjs
+```
+
+`public/3D玫瑰花素材/` 下的兩組模型沒有被刪除；它們目前沒有執行引用，但保留其 bin、貼圖與授權檔以避免破壞來源與日後恢復選項。盤點沒有找到獨立的 MP4、影片 render、`dist/`、`build/`、`out/` 或 `output/` 成品。
+
+## 環境、依賴與啟動
+
+這是無 bundler 的純前端專案，repo 沒有 `package.json`、lockfile 或 `node_modules/`。瀏覽器依賴直接記錄於 `index.html`：
+
+- Three.js `0.160.0` 與 addons：`https://unpkg.com/three@0.160.0/`。
+- GSAP `3.12.4`：`https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js`。
+- 需要支援 ES modules、WebGL/GPGPU 的瀏覽器與可存取上述 CDN 的網路。
+
+在專案根目錄啟動本機 HTTP server：
+
+```bash
+python3 -m http.server 57832
+```
+
+再開啟：
+
+```text
+http://127.0.0.1:57832/?v=20260819_wedding_v9
+```
+
+不要直接以 `file://` 開啟；頁面會顯示警告，ES modules/GLTF 也可能受 CORS 限制。若要測試純函式邏輯：
+
 ```bash
 node --test tests/*.mjs
 ```
 
-## 離線算出影片（備援方案）
-現場若不想依賴瀏覽器即時運算，可先算成 mp4 播放。算圖以固定 dt 逐幀驅動**正式程式碼**（非另寫一套），因此畫面與現場版完全一致，且不受機器效能影響（不會掉幀）。
+本次盤點使用的觀測版本為 Node `v24.18.0`、Python `3.14.3`、Git `2.39.5`；它們不是由 lockfile 固定的需求版本。盤點時 13 個測試全部通過。
 
-以 DPR 2（3840×2160）算圖再降到 1080p，等同超取樣抗鋸齒，粒子細節比直接 1080p 算更細緻。
+## 恢復與驗證
 
-用到的鉤子（平時完全不影響執行）：
-- `__vfx.stopLoop()` — 停用即時 rAF 迴圈
-- `__vfx.renderFrame(dt, t)` — 以指定 dt 推進並算一幀
-- `__vfx.cancelAutoRotate()` — 取消 5 分鐘自動輪播計時器
+1. 解開封存包後，先確認 `FILE_MANIFEST` 的路徑、SHA-256、符號連結與權限，再以該專案目錄作為 HTTP server 根目錄。
+2. 確認 `public/papa_meilland_rose/scene.gltf` 的 `scene.bin`、textures 與 `license.txt` 都在；確認 `public/logo.png` 可讀。
+3. 執行 `node --test tests/*.mjs`。
+4. 執行 `python3 -m http.server 57832`，用瀏覽器載入入口；確認畫面、WebGL、GLTF、LOGO 與鍵盤切換。
+5. 若需現場診斷，在 DevTools console 使用 `__vfx.getDesiredState()`、`__vfx.getActiveSim()`、`__vfx.simStats(__vfx.renderer)`。離線算圖掛鉤為 `__vfx.stopLoop()`、`__vfx.renderFrame(dt, t)`、`__vfx.cancelAutoRotate()`；本次沒有重新算圖驗證。
 
-注意：GSAP 的鏡頭運鏡預設綁在 rAF 真實時間上，離線算圖時必須 `gsap.ticker.sleep()` 並改用 `gsap.updateRoot(影格時間)`，否則運鏡速度會隨算圖快慢而錯亂。
+只通過 Node 測試不等於 GPU、瀏覽器、CDN 或 Vercel 恢復已完整驗證；本次封存驗證限制見封存包內 `ARCHIVE_README.md`。
 
-## 現場診斷
-瀏覽器 DevTools console 可用 `__vfx` 掛鉤：
-- `__vfx.toggleState()` — 鍵盤失效時手動切換
-- `__vfx.getDesiredState()` / `__vfx.getActiveSim()` — 目前狀態
-- `__vfx.simStats(__vfx.renderer)` — 兩套模擬的可見性與粒子實際座標範圍
+## 外部素材、服務與限制
+
+- 本地 `public/` 已包含目前模型、兩組保留模型、貼圖、LOGO、`photo.png` 與授權檔；執行時模型與 LOGO 不需另從 Sketchfab 下載。
+- Three.js/GSAP 仍依賴外部 CDN，未 vendor 進封存；CDN 內容或可用性變化時，需要人工調整 import map 或補入相容副本。本次不安裝、不升級、不改寫 CDN 版本。
+- Vercel 的靜態設定 `vercel.json` 在 GitHub；`.vercel/` 的本機連結 metadata 只在封存包，不含登入憑證，不可取代 Vercel 權限。盤點時 `https://wedding-vfx-engine.vercel.app/` 回應 HTTP 200，日後狀態仍需另行確認。
+- `audio.js` 的麥克風功能需要使用者明確授權，目前未發現主入口引用；本封存沒有音訊檔。
+- 專案位於本機 `/Users/Openclaw/Documents/...`，不在 iCloud Drive 目錄；本地可讀不代表行動硬碟或雲端副本已完成。
+
+## GitHub 與封存包
+
+GitHub repo：<https://github.com/kluorvoeDing/wedding-vfx-engine>
+
+目前分支：`feature/wedding-logo-only`
+
+盤點時本地 HEAD：`164d6d413d13c236e9637c17a7685c70df8b0fae`，與同名 `origin` 分支一致。
+
+GitHub 會保存已追蹤的程式、測試、文件、授權素材、PNG 與 `vercel.json`。`.git/`、`.claude/`、`.vercel/` 不在 GitHub；本次封存包會保存它們及本地 Git 狀態。封存專用的 `ARCHIVE_README.md` 與 `FILE_MANIFEST` 只放在封存包，不提交 GitHub；封存包本身也不會提交。
+
+Git 歷史中另有本地 `main` 比 `origin/main` 超前 1 個既有提交；本次不切換、不合併、不替它推送。遠端保留，沒有建立 PR 或自動部署操作。
+
+## 維護界線
+
+後續維護預設「先保存，再判斷」：不因檔名相似、檔案較舊、檔案較大或目前未被引用就刪除。不得自動升級依賴、重構、重新渲染、重新部署、修改/刪除 GitHub 遠端、刪除 Vercel/雲端資料，或刪除本機原始專案。任何清理與恢復都應先更新索引、保留證據並做可回讀驗證。
